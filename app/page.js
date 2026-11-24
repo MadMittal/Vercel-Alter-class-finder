@@ -171,8 +171,7 @@ export default function Home() {
         `2️⃣ ${keptTime}: Attend ${kept.session.course} ${kept.session.no ? '(Session #' + kept.session.no + ')' : ''}\n` +
         `   • Room: ${kept.session.room || 'TBD'} (with Section ${section})\n` +
         `-----------------------------------------\n` +
-        `⚠️ Important Rule: Quizzes & Graded Evaluations\n` +
-        `If either class has a Quiz or Graded Evaluation, it is suggested to attend that class in person. And the other classroom session can be attended with another time slot or section.`;
+        `⚠️ Note: If either class has a Quiz or Graded Evaluation, attend that class in your own section and take the other class in an alternate slot or section.`;
     } else if (isSameDayAlt && !isAltEarlier) {
       copyText = `🎓 Masters' Union Clash Plan (Section ${section})\n` +
         `📅 Date: ${dateFormatted}\n` +
@@ -183,8 +182,7 @@ export default function Home() {
         `2️⃣ ${other.bestAlternate.timeFormatted}: Attend ${other.session.course} ${other.session.no ? '(Session #' + other.session.no + ')' : ''}\n` +
         `   • Room: ${other.bestAlternate.room || 'TBD'} (with Section ${other.bestAlternate.sections.join(', ')})\n` +
         `-----------------------------------------\n` +
-        `⚠️ Important Rule: Quizzes & Graded Evaluations\n` +
-        `If either class has a Quiz or Graded Evaluation, it is suggested to attend that class in person. And the other classroom session can be attended with another time slot or section.`;
+        `⚠️ Note: If either class has a Quiz or Graded Evaluation, attend that class in your own section and take the other class in an alternate slot or section.`;
     } else {
       const altDetails = other.bestAlternate
         ? `${formatDisplayDate(other.bestAlternate.date, other.bestAlternate.dow)} @ ${other.bestAlternate.timeFormatted} in Room ${other.bestAlternate.room} (with Section ${other.bestAlternate.sections.join(', ')})`
@@ -199,8 +197,7 @@ export default function Home() {
         `   • ${other.session.course} ${other.session.no ? '(Session #' + other.session.no + ')' : ''}\n` +
         `   • ${altDetails}\n` +
         `-----------------------------------------\n` +
-        `⚠️ Important Rule: Quizzes & Graded Evaluations\n` +
-        `If either class has a Quiz or Graded Evaluation, it is suggested to attend that class in person. And the other classroom session can be attended with another time slot or section.`;
+        `⚠️ Note: If either class has a Quiz or Graded Evaluation, attend that class in your own section and take the other class in an alternate slot or section.`;
     }
 
     setConfirmedPlan({
@@ -511,7 +508,7 @@ export default function Home() {
                 <span>Important Rule: Quizzes & Graded Evaluations</span>
               </div>
               <div className="disclaimer-body">
-                If either class has a <strong>Quiz or Graded Evaluation</strong>, it is suggested to attend that class in person. And the other classroom session can be attended with another time slot or section.
+                If either class has a <strong>Quiz or Graded Evaluation</strong>, attend that class in your own section and take the other class in an alternate slot or section.
               </div>
             </div>
 
