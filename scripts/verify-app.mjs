@@ -165,8 +165,11 @@ check('Product Growth has equal 8 sessions across A, B, F (Bhanu ODC separated c
   assert.deepEqual(counts, { A: 8, B: 8, F: 8 });
 });
 
-check('Edge CDN apiCacheHeaders returns s-maxage=300 normally and no-store on force refresh', () => {
-  assert.deepEqual(apiCacheHeaders(false), { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60' });
+check('Edge CDN apiCacheHeaders sets Vercel-CDN-Cache-Control s-maxage=300 normally and no-store on force refresh', () => {
+  assert.deepEqual(apiCacheHeaders(false), {
+    'Cache-Control': 'public, max-age=0, must-revalidate',
+    'Vercel-CDN-Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
+  });
   assert.deepEqual(apiCacheHeaders(true), { 'Cache-Control': 'no-store' });
 });
 
