@@ -282,6 +282,35 @@ header.mu-header {
   box-shadow: var(--m3-elevation-1);
 }
 
+.clash-guidelines-box {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(217, 119, 6, 0.22);
+}
+
+.guidelines-header {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #92400E;
+  margin-bottom: 5px;
+}
+
+.guidelines-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #78350F;
+  line-height: 1.55;
+}
+
+.guidelines-list li {
+  margin-bottom: 4px;
+}
+
+.guidelines-list li:last-child {
+  margin-bottom: 0;
+}
+
 .clash-summary-banner.all-good {
   background: var(--google-green-surface);
   border-color: var(--google-green-border);

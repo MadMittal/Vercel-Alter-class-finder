@@ -274,7 +274,7 @@ export default function Home() {
       });
     }
 
-    copyText += `-----------------------------------------\n⚠️ Note: If either class has a Quiz or Graded Evaluation, attend that class in your own section and take the other class in an alternate slot or section.`;
+    copyText += `-----------------------------------------\n⚠️ Attendance Guidelines:\n1. Quizzes & Graded Evaluations: If either class has a Quiz or Graded Evaluation, it is suggested to attend that class in person. The other session can be attended in another time slot or section.\n2. Priority Sessions: If a session is not available in any other section, please attend that class as a priority.\n3. Session Availability: In case of a clash, try to attend the class where fewer alternates exist, and catch the course where more sessions are available in other sections.`;
 
     setConfirmedPlan({
       kept,
@@ -522,19 +522,38 @@ export default function Home() {
             {/* Upcoming Clashes Summary Alert */}
             {!loadingSchedule && (
               upcomingClashes.length > 0 ? (
-                <div className="clash-summary-banner">
-                  <div style={{ fontSize: 13.5, color: 'var(--text-primary)' }}>
-                    <strong>⚠️ Section {section} has {pluralize(upcomingClashes.length, 'clash day', 'clash days')} with overlapping classes</strong>
-                    <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 2 }}>
-                      Next overlap: <strong>{getClashContextDate(upcomingClashes[0].date, upcomingClashes[0].dow)}</strong>
+                <div className="clash-summary-banner" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 13.5, color: 'var(--text-primary)' }}>
+                      <strong>⚠️ Section {section} has {pluralize(upcomingClashes.length, 'clash day', 'clash days')} with overlapping classes</strong>
+                      <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 2 }}>
+                        Next overlap: <strong>{getClashContextDate(upcomingClashes[0].date, upcomingClashes[0].dow)}</strong>
+                      </div>
                     </div>
+                    <button
+                      className="clash-summary-btn"
+                      onClick={() => openClashResolver(upcomingClashes[0])}
+                    >
+                      Find Alternate →
+                    </button>
                   </div>
-                  <button
-                    className="clash-summary-btn"
-                    onClick={() => openClashResolver(upcomingClashes[0])}
-                  >
-                    Find Alternate →
-                  </button>
+
+                  <div className="clash-guidelines-box">
+                    <div className="guidelines-header">
+                      📋 <strong>Attendance Guidelines in Case of a Clash:</strong>
+                    </div>
+                    <ul className="guidelines-list">
+                      <li>
+                        <strong>Quizzes & Graded Evaluations:</strong> If either class has a Quiz or Graded Evaluation, it is suggested to attend that class in person. The other classroom session can be attended with another time slot or section.
+                      </li>
+                      <li>
+                        <strong>Priority Sessions:</strong> If the session is not available in any other section, please attend that class as a priority.
+                      </li>
+                      <li>
+                        <strong>Session Availability:</strong> In case of a clash, try to attend the class where fewer alternates exist, and catch the course where more sessions/options are available in other sections.
+                      </li>
+                    </ul>
+                  </div>
                 </div>
               ) : (
                 <div className="clash-summary-banner all-good">
@@ -704,14 +723,16 @@ export default function Home() {
               </div>
             )}
 
-            {/* Evaluation Disclaimer Banner */}
+            {/* Evaluation & Attendance Disclaimer Banner */}
             <div className="evaluation-disclaimer-card">
               <div className="disclaimer-title">
                 <span>⚠️</span>
-                <span>Important Rule: Quizzes & Graded Evaluations</span>
+                <span>Important Attendance Guidelines</span>
               </div>
-              <div className="disclaimer-body">
-                If either class has a <strong>Quiz or Graded Evaluation</strong>, attend that class in your own section and take the other class in an alternate slot or section.
+              <div className="disclaimer-body" style={{ lineHeight: 1.6 }}>
+                <div>• <strong>Quizzes & Graded Evaluations:</strong> If either class has a Quiz or Graded Evaluation, it is suggested to attend that class in person. The other classroom session can be attended with another time slot or section.</div>
+                <div style={{ marginTop: 4 }}>• <strong>Priority Sessions:</strong> If the session is not available in any other section, please attend that class as a priority.</div>
+                <div style={{ marginTop: 4 }}>• <strong>Session Availability:</strong> In case of a clash, try to attend the class where fewer alternates exist, and catch the course where more sessions/options are available in other sections.</div>
               </div>
             </div>
 
