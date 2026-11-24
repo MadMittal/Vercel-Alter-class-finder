@@ -260,7 +260,7 @@ export default function Home() {
       <header className="mu-header">
         <div className="header-container">
           <div className="logo-title-group" onClick={() => setActiveTab('schedule')}>
-            <span style={{ fontWeight: 800, fontSize: '18px', letterSpacing: '-0.5px' }}>masters&apos; union</span>
+            <img src="/mu-logo.png" alt="Masters' Union" className="mu-logo-img" />
             <span className="app-tag">Alt-Class Finder</span>
           </div>
           <div id="sync-pill" className="sync-status-pill">

@@ -83,6 +83,7 @@
     height: 26px;
     width: auto;
     display: block;
+    object-fit: contain;
   }
 
   .app-tag {
