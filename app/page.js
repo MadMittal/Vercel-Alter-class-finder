@@ -157,21 +157,51 @@ export default function Home() {
     const dateFormatted = formatDisplayDate(clashAdvice.date, clashAdvice.dow);
     const keptTime = formatMinTo12h(kept.session.startMin) + ' – ' + formatMinTo12h(kept.session.endMin);
 
-    const altDetails = other.bestAlternate
-      ? `${formatDisplayDate(other.bestAlternate.date, other.bestAlternate.dow)} @ ${other.bestAlternate.timeFormatted} in Room ${other.bestAlternate.room} (with Section ${other.bestAlternate.sections.join(', ')})`
-      : 'No alternate scheduled in other sections.';
+    const isSameDayAlt = other.bestAlternate && other.bestAlternate.date === clashAdvice.date;
+    const isAltEarlier = isSameDayAlt && (other.bestAlternate.startMin < kept.session.startMin);
 
-    const copyText = `🎓 Masters' Union Clash Plan (Section ${section})\n` +
-      `📅 Date: ${dateFormatted} (${clashAdvice.timeFormatted || keptTime})\n` +
-      `-----------------------------------------\n` +
-      `✅ 1. ATTEND IN PERSON TODAY:\n` +
-      `   • ${kept.session.course} ${kept.session.no ? '(Session #' + kept.session.no + ')' : ''}\n` +
-      `   • Room: ${kept.session.room || 'TBD'} @ ${keptTime}\n\n` +
-      `🎯 2. TAKE ALTERNATE LATER:\n` +
-      `   • ${other.session.course} ${other.session.no ? '(Session #' + other.session.no + ')' : ''}\n` +
-      `   • ${altDetails}\n` +
-      `-----------------------------------------\n` +
-      `⚠️ Note: If either class has an exam, quiz, or graded evaluation, attend that class in person.`;
+    let copyText = '';
+    if (isSameDayAlt && isAltEarlier) {
+      copyText = `🎓 Masters' Union Clash Plan (Section ${section})\n` +
+        `📅 Date: ${dateFormatted}\n` +
+        `-----------------------------------------\n` +
+        `⚡ SAME-DAY ATTENDANCE PLAN:\n` +
+        `1️⃣ ${other.bestAlternate.timeFormatted}: Attend ${other.session.course} ${other.session.no ? '(Session #' + other.session.no + ')' : ''}\n` +
+        `   • Room: ${other.bestAlternate.room || 'TBD'} (with Section ${other.bestAlternate.sections.join(', ')})\n\n` +
+        `2️⃣ ${keptTime}: Attend ${kept.session.course} ${kept.session.no ? '(Session #' + kept.session.no + ')' : ''}\n` +
+        `   • Room: ${kept.session.room || 'TBD'} (with Section ${section})\n` +
+        `-----------------------------------------\n` +
+        `⚠️ Important Rule: Quizzes & Graded Evaluations\n` +
+        `If either class has a Quiz or Graded Evaluation, it is suggested to attend that class in person. And the other classroom session can be attended with another time slot or section.`;
+    } else if (isSameDayAlt && !isAltEarlier) {
+      copyText = `🎓 Masters' Union Clash Plan (Section ${section})\n` +
+        `📅 Date: ${dateFormatted}\n` +
+        `-----------------------------------------\n` +
+        `⚡ SAME-DAY ATTENDANCE PLAN:\n` +
+        `1️⃣ ${keptTime}: Attend ${kept.session.course} ${kept.session.no ? '(Session #' + kept.session.no + ')' : ''}\n` +
+        `   • Room: ${kept.session.room || 'TBD'} (with Section ${section})\n\n` +
+        `2️⃣ ${other.bestAlternate.timeFormatted}: Attend ${other.session.course} ${other.session.no ? '(Session #' + other.session.no + ')' : ''}\n` +
+        `   • Room: ${other.bestAlternate.room || 'TBD'} (with Section ${other.bestAlternate.sections.join(', ')})\n` +
+        `-----------------------------------------\n` +
+        `⚠️ Important Rule: Quizzes & Graded Evaluations\n` +
+        `If either class has a Quiz or Graded Evaluation, it is suggested to attend that class in person. And the other classroom session can be attended with another time slot or section.`;
+    } else {
+      const altDetails = other.bestAlternate
+        ? `${formatDisplayDate(other.bestAlternate.date, other.bestAlternate.dow)} @ ${other.bestAlternate.timeFormatted} in Room ${other.bestAlternate.room} (with Section ${other.bestAlternate.sections.join(', ')})`
+        : 'No alternate scheduled in other sections.';
+      copyText = `🎓 Masters' Union Clash Plan (Section ${section})\n` +
+        `📅 Date: ${dateFormatted} (${clashAdvice.timeFormatted || keptTime})\n` +
+        `-----------------------------------------\n` +
+        `✅ 1. ATTEND ON ${dateFormatted}:\n` +
+        `   • ${kept.session.course} ${kept.session.no ? '(Session #' + kept.session.no + ')' : ''}\n` +
+        `   • Room: ${kept.session.room || 'TBD'} @ ${keptTime}\n\n` +
+        `🎯 2. TAKE ALTERNATE:\n` +
+        `   • ${other.session.course} ${other.session.no ? '(Session #' + other.session.no + ')' : ''}\n` +
+        `   • ${altDetails}\n` +
+        `-----------------------------------------\n` +
+        `⚠️ Important Rule: Quizzes & Graded Evaluations\n` +
+        `If either class has a Quiz or Graded Evaluation, it is suggested to attend that class in person. And the other classroom session can be attended with another time slot or section.`;
+    }
 
     setConfirmedPlan({
       kept,
@@ -179,6 +209,8 @@ export default function Home() {
       dateFormatted,
       keptTime,
       copyText,
+      isSameDayAlt,
+      isAltEarlier,
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -249,6 +281,21 @@ export default function Home() {
     const parts = isoDate.split('-').map(Number);
     const y = parts[0], mo = parts[1], d = parts[2];
     return `${dow || ''}, ${d} ${MONTHS[mo - 1]}`;
+  }
+
+  function getClashContextDate(isoDate, dow) {
+    if (!isoDate) return '';
+    const formatted = formatDisplayDate(isoDate, dow);
+    const today = bootstrap?.todayDate || todayISO;
+    if (today && isoDate === today) return `${formatted} (Today)`;
+    if (today) {
+      try {
+        const d = new Date(today);
+        d.setDate(d.getDate() + 1);
+        if (isoDate === d.toISOString().slice(0, 10)) return `${formatted} (Tomorrow)`;
+      } catch (_) {}
+    }
+    return formatted;
   }
 
   const todayISO = bootstrap?.today || new Date().toISOString().slice(0, 10);
@@ -464,7 +511,7 @@ export default function Home() {
                 <span>Important Rule: Quizzes & Graded Evaluations</span>
               </div>
               <div className="disclaimer-body">
-                If either class has a <strong>Quiz, Mid-term, Presentation, or Graded Evaluation</strong> today, <strong>ALWAYS attend that class in person</strong>. Graded components cannot be made up in another section!
+                If either class has a <strong>Quiz or Graded Evaluation</strong>, it is suggested to attend that class in person. And the other classroom session can be attended with another time slot or section.
               </div>
             </div>
 
@@ -489,35 +536,97 @@ export default function Home() {
                   Here is your plan for Section {section} on {confirmedPlan.dateFormatted}:
                 </div>
                 <div className="plan-steps-container">
-                  <div className="step-box today-step">
-                    <div className="step-header today">
-                      <span>1️⃣</span> <span>Attend in Person Today</span>
-                    </div>
-                    <div className="step-body-main">
-                      {confirmedPlan.kept.session.course} {confirmedPlan.kept.session.no ? `(Session #${confirmedPlan.kept.session.no})` : ''}
-                    </div>
-                    <div className="step-body-sub">
-                      🕒 Today @ {confirmedPlan.keptTime} · 📍 Room: <strong>{confirmedPlan.kept.session.room || 'TBD'}</strong>
-                    </div>
-                  </div>
+                  {confirmedPlan.isSameDayAlt && confirmedPlan.isAltEarlier ? (
+                    <>
+                      <div className="same-day-solution-banner">
+                        ⚡ <strong>Same-Day Plan ({confirmedPlan.dateFormatted}):</strong> Attend <strong>{confirmedPlan.other.session.course}</strong> at {confirmedPlan.other.bestAlternate.timeFormatted} and <strong>{confirmedPlan.kept.session.course}</strong> at {confirmedPlan.keptTime}.
+                      </div>
+                      <div className="step-box alt-step">
+                        <div className="step-header alt">
+                          <span>1️⃣</span> <span>Attend Earlier at {confirmedPlan.other.bestAlternate.timeFormatted}</span>
+                        </div>
+                        <div className="step-body-main">
+                          {confirmedPlan.other.session.course} {confirmedPlan.other.session.no ? `(Session #${confirmedPlan.other.session.no})` : ''}
+                        </div>
+                        <div className="step-body-sub">
+                          📅 {confirmedPlan.dateFormatted} · 📍 Room: <strong>{confirmedPlan.other.bestAlternate.room || 'TBD'}</strong> (with Section {confirmedPlan.other.bestAlternate.sections.join(', ')})
+                        </div>
+                      </div>
 
-                  <div className="step-box alt-step">
-                    <div className="step-header alt">
-                      <span>2️⃣</span> <span>Attend Alternate Session</span>
-                    </div>
-                    <div className="step-body-main">
-                      {confirmedPlan.other.session.course} {confirmedPlan.other.session.no ? `(Session #${confirmedPlan.other.session.no})` : ''}
-                    </div>
-                    {confirmedPlan.other.bestAlternate ? (
-                      <div className="step-body-sub">
-                        📅 {formatDisplayDate(confirmedPlan.other.bestAlternate.date, confirmedPlan.other.bestAlternate.dow)} @ {confirmedPlan.other.bestAlternate.timeFormatted} · 📍 Room: <strong>{confirmedPlan.other.bestAlternate.room || 'TBD'}</strong> (with Section {confirmedPlan.other.bestAlternate.sections.join(', ')})
+                      <div className="step-box today-step">
+                        <div className="step-header today">
+                          <span>2️⃣</span> <span>Attend at {confirmedPlan.keptTime}</span>
+                        </div>
+                        <div className="step-body-main">
+                          {confirmedPlan.kept.session.course} {confirmedPlan.kept.session.no ? `(Session #${confirmedPlan.kept.session.no})` : ''}
+                        </div>
+                        <div className="step-body-sub">
+                          📅 {confirmedPlan.dateFormatted} · 📍 Room: <strong>{confirmedPlan.kept.session.room || 'TBD'}</strong> (with Section {section})
+                        </div>
                       </div>
-                    ) : (
-                      <div className="step-body-sub" style={{ color: 'var(--google-red)' }}>
-                        No alternate session scheduled in any other section.
+                    </>
+                  ) : confirmedPlan.isSameDayAlt && !confirmedPlan.isAltEarlier ? (
+                    <>
+                      <div className="same-day-solution-banner">
+                        ⚡ <strong>Same-Day Plan ({confirmedPlan.dateFormatted}):</strong> Attend <strong>{confirmedPlan.kept.session.course}</strong> at {confirmedPlan.keptTime} and <strong>{confirmedPlan.other.session.course}</strong> at {confirmedPlan.other.bestAlternate.timeFormatted}.
                       </div>
-                    )}
-                  </div>
+                      <div className="step-box today-step">
+                        <div className="step-header today">
+                          <span>1️⃣</span> <span>Attend at {confirmedPlan.keptTime}</span>
+                        </div>
+                        <div className="step-body-main">
+                          {confirmedPlan.kept.session.course} {confirmedPlan.kept.session.no ? `(Session #${confirmedPlan.kept.session.no})` : ''}
+                        </div>
+                        <div className="step-body-sub">
+                          📅 {confirmedPlan.dateFormatted} · 📍 Room: <strong>{confirmedPlan.kept.session.room || 'TBD'}</strong> (with Section {section})
+                        </div>
+                      </div>
+
+                      <div className="step-box alt-step">
+                        <div className="step-header alt">
+                          <span>2️⃣</span> <span>Attend Later at {confirmedPlan.other.bestAlternate.timeFormatted}</span>
+                        </div>
+                        <div className="step-body-main">
+                          {confirmedPlan.other.session.course} {confirmedPlan.other.session.no ? `(Session #${confirmedPlan.other.session.no})` : ''}
+                        </div>
+                        <div className="step-body-sub">
+                          📅 {confirmedPlan.dateFormatted} · 📍 Room: <strong>{confirmedPlan.other.bestAlternate.room || 'TBD'}</strong> (with Section {confirmedPlan.other.bestAlternate.sections.join(', ')})
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="step-box today-step">
+                        <div className="step-header today">
+                          <span>1️⃣</span> <span>Attend on {confirmedPlan.dateFormatted}</span>
+                        </div>
+                        <div className="step-body-main">
+                          {confirmedPlan.kept.session.course} {confirmedPlan.kept.session.no ? `(Session #${confirmedPlan.kept.session.no})` : ''}
+                        </div>
+                        <div className="step-body-sub">
+                          🕒 {confirmedPlan.dateFormatted} @ {confirmedPlan.keptTime} · 📍 Room: <strong>{confirmedPlan.kept.session.room || 'TBD'}</strong>
+                        </div>
+                      </div>
+
+                      <div className="step-box alt-step">
+                        <div className="step-header alt">
+                          <span>2️⃣</span> <span>Attend Alternate Session</span>
+                        </div>
+                        <div className="step-body-main">
+                          {confirmedPlan.other.session.course} {confirmedPlan.other.session.no ? `(Session #${confirmedPlan.other.session.no})` : ''}
+                        </div>
+                        {confirmedPlan.other.bestAlternate ? (
+                          <div className="step-body-sub">
+                            📅 {formatDisplayDate(confirmedPlan.other.bestAlternate.date, confirmedPlan.other.bestAlternate.dow)} @ {confirmedPlan.other.bestAlternate.timeFormatted} · 📍 Room: <strong>{confirmedPlan.other.bestAlternate.room || 'TBD'}</strong> (with Section {confirmedPlan.other.bestAlternate.sections.join(', ')})
+                          </div>
+                        ) : (
+                          <div className="step-body-sub" style={{ color: 'var(--google-red)' }}>
+                            No alternate session scheduled in any other section.
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="plan-action-row">
@@ -561,6 +670,10 @@ export default function Home() {
                   const other = idx === 0 ? clashAdvice.evaluatedSessions[1] : clashAdvice.evaluatedSessions[0];
                   const isRec = clashAdvice.recommendation?.attendSessionId === kept.session.id;
                   const keptTime = `${formatMinTo12h(kept.session.startMin)} – ${formatMinTo12h(kept.session.endMin)}`;
+                  const clashDateFormatted = getClashContextDate(activeClashDay.date, activeClashDay.dow);
+
+                  const isSameDayAlt = other.bestAlternate && other.bestAlternate.date === activeClashDay.date;
+                  const isAltEarlier = isSameDayAlt && (other.bestAlternate.startMin < kept.session.startMin);
 
                   return (
                     <div
@@ -584,50 +697,121 @@ export default function Home() {
                         )}
                       </div>
 
-                      {/* Step 1 */}
-                      <div className="step-box today-step">
-                        <div className="step-header today">
-                          <span>1️⃣</span> <span>Step 1 · Attend in Person Today</span>
-                        </div>
-                        <div className="step-body-main">Walk into Room {kept.session.room || 'TBD'} at {keptTime}</div>
-                        <div className="step-body-sub">Course: {kept.session.course} with Section {section}</div>
-                      </div>
+                      {/* Step Sequences */}
+                      {isSameDayAlt && isAltEarlier ? (
+                        <>
+                          <div className="same-day-solution-banner">
+                            ⚡ <strong>Same-Day Solution:</strong> Attend <strong>{other.session.course}</strong> at {other.bestAlternate.timeFormatted} and <strong>{kept.session.course}</strong> at {keptTime} on {clashDateFormatted}.
+                          </div>
 
-                      {/* Step 2 */}
-                      {other.hasNoAlternates ? (
-                        <div className="step-box warn-step">
-                          <div className="step-header warn">
-                            <span>⚠️</span> <span>Step 2 · Warning for {other.session.course}</span>
+                          {/* Step 1: Earlier Class */}
+                          <div className="step-box alt-step">
+                            <div className="step-header alt">
+                              <span>1️⃣</span> <span>Step 1 · Attend Earlier at {other.bestAlternate.timeFormatted}</span>
+                            </div>
+                            <div className="step-body-main">
+                              Attend <strong>{other.session.course}</strong> in Room {other.bestAlternate.room || 'TBD'}
+                            </div>
+                            <div className="step-body-sub">
+                              📅 {clashDateFormatted} · 👥 Section {other.bestAlternate.sections.join(', ')} {' '}
+                              <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>(✅ Clash-Free for Section {section})</span>
+                            </div>
                           </div>
-                          <div className="step-body-main" style={{ color: 'var(--google-red)' }}>
-                            No alternate session exists in any other section!
+
+                          {/* Step 2: Second Class */}
+                          <div className="step-box today-step">
+                            <div className="step-header today">
+                              <span>2️⃣</span> <span>Step 2 · Attend at {keptTime}</span>
+                            </div>
+                            <div className="step-body-main">
+                              Walk into Room {kept.session.room || 'TBD'} for <strong>{kept.session.course}</strong>
+                            </div>
+                            <div className="step-body-sub">
+                              📅 {clashDateFormatted} · Regular class with Section {section}
+                            </div>
                           </div>
-                          <div className="step-body-sub">
-                            If you attend {kept.session.course} today, you will not have an alternate slot for {other.session.course}.
+                        </>
+                      ) : isSameDayAlt && !isAltEarlier ? (
+                        <>
+                          <div className="same-day-solution-banner">
+                            ⚡ <strong>Same-Day Solution:</strong> Attend <strong>{kept.session.course}</strong> at {keptTime} and <strong>{other.session.course}</strong> at {other.bestAlternate.timeFormatted} on {clashDateFormatted}.
                           </div>
-                        </div>
-                      ) : other.bestAlternate ? (
-                        <div className="step-box alt-step">
-                          <div className="step-header alt">
-                            <span>2️⃣</span> <span>Step 2 · Catch {other.session.course} Later</span>
+
+                          {/* Step 1: First Class */}
+                          <div className="step-box today-step">
+                            <div className="step-header today">
+                              <span>1️⃣</span> <span>Step 1 · Attend at {keptTime}</span>
+                            </div>
+                            <div className="step-body-main">
+                              Walk into Room {kept.session.room || 'TBD'} for <strong>{kept.session.course}</strong>
+                            </div>
+                            <div className="step-body-sub">
+                              📅 {clashDateFormatted} · Regular class with Section {section}
+                            </div>
                           </div>
-                          <div className="step-body-main">
-                            📅 {formatDisplayDate(other.bestAlternate.date, other.bestAlternate.dow)} · 🕒 {other.bestAlternate.timeFormatted}
+
+                          {/* Step 2: Later Class */}
+                          <div className="step-box alt-step">
+                            <div className="step-header alt">
+                              <span>2️⃣</span> <span>Step 2 · Attend Later at {other.bestAlternate.timeFormatted}</span>
+                            </div>
+                            <div className="step-body-main">
+                              Attend <strong>{other.session.course}</strong> in Room {other.bestAlternate.room || 'TBD'}
+                            </div>
+                            <div className="step-body-sub">
+                              📅 {clashDateFormatted} · 👥 Section {other.bestAlternate.sections.join(', ')} {' '}
+                              <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>(✅ Clash-Free for Section {section})</span>
+                            </div>
                           </div>
-                          <div className="step-body-sub">
-                            📍 Room: {other.bestAlternate.room || 'TBD'} · 👥 Section {other.bestAlternate.sections.join(', ')} {' '}
-                            {other.bestAlternate.free ? (
-                              <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>
-                                (✅ Clash-Free for Section {section})
-                              </span>
-                            ) : (
-                              <span style={{ color: 'var(--google-red)' }}>
-                                (⚠️ Conflicts with your timetable)
-                              </span>
-                            )}
+                        </>
+                      ) : (
+                        <>
+                          {/* Step 1 */}
+                          <div className="step-box today-step">
+                            <div className="step-header today">
+                              <span>1️⃣</span> <span>Step 1 · Attend on {clashDateFormatted}</span>
+                            </div>
+                            <div className="step-body-main">Walk into Room {kept.session.room || 'TBD'} at {keptTime}</div>
+                            <div className="step-body-sub">Course: {kept.session.course} with Section {section}</div>
                           </div>
-                        </div>
-                      ) : null}
+
+                          {/* Step 2 */}
+                          {other.hasNoAlternates ? (
+                            <div className="step-box warn-step">
+                              <div className="step-header warn">
+                                <span>⚠️</span> <span>Step 2 · Warning for {other.session.course}</span>
+                              </div>
+                              <div className="step-body-main" style={{ color: 'var(--google-red)' }}>
+                                No alternate session exists in any other section!
+                              </div>
+                              <div className="step-body-sub">
+                                If you attend {kept.session.course} on {clashDateFormatted}, you will not have an alternate slot for {other.session.course}.
+                              </div>
+                            </div>
+                          ) : other.bestAlternate ? (
+                            <div className="step-box alt-step">
+                              <div className="step-header alt">
+                                <span>2️⃣</span> <span>Step 2 · Catch {other.session.course} on {formatDisplayDate(other.bestAlternate.date, other.bestAlternate.dow)}</span>
+                              </div>
+                              <div className="step-body-main">
+                                📅 {formatDisplayDate(other.bestAlternate.date, other.bestAlternate.dow)} · 🕒 {other.bestAlternate.timeFormatted}
+                              </div>
+                              <div className="step-body-sub">
+                                📍 Room: {other.bestAlternate.room || 'TBD'} · 👥 Section {other.bestAlternate.sections.join(', ')} {' '}
+                                {other.bestAlternate.free ? (
+                                  <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>
+                                    (✅ Clash-Free for Section {section})
+                                  </span>
+                                ) : (
+                                  <span style={{ color: 'var(--google-red)' }}>
+                                    (⚠️ Conflicts with your timetable)
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : null}
+                        </>
+                      )}
 
                       {/* Action Button */}
                       <button
@@ -635,7 +819,7 @@ export default function Home() {
                         style={{ marginTop: 10 }}
                         onClick={() => handleConfirmPlan(kept.session.id)}
                       >
-                        {isRec ? '⭐ ' : '👉 '}Confirm Plan: Attend {kept.session.course} Today
+                        {isRec ? '⭐ ' : '👉 '}Confirm Plan: {isSameDayAlt ? `Attend Both on ${formatDisplayDate(activeClashDay.date, activeClashDay.dow)}` : `Attend ${kept.session.course} on ${formatDisplayDate(activeClashDay.date, activeClashDay.dow)}`}
                       </button>
 
                       {/* Secondary Link */}

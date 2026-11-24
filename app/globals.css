@@ -478,6 +478,18 @@
     line-height: 1.5;
   }
 
+  .same-day-solution-banner {
+    background: #E8F0FE;
+    border: 1px solid #D2E3FC;
+    border-left: 4px solid var(--google-blue);
+    border-radius: var(--m3-radius-sm);
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    font-size: 13.5px;
+    color: #174EA6;
+    line-height: 1.45;
+  }
+
   .recommendation-banner {
     background: var(--google-green-surface);
     border: 1px solid var(--google-green-border);
