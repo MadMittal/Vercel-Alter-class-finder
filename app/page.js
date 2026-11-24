@@ -459,7 +459,7 @@ export default function Home() {
             className={`nav-tab-btn ${activeTab === 'schedule' || activeTab === 'clash' || activeTab === 'alternates' ? 'active' : ''}`}
             onClick={() => setActiveTab('schedule')}
           >
-            📅 My Schedule
+            📅 Schedule
           </button>
           <button
             className={`nav-tab-btn ${activeTab === 'subject' ? 'active' : ''}`}
@@ -524,7 +524,7 @@ export default function Home() {
               upcomingClashes.length > 0 ? (
                 <div className="clash-summary-banner">
                   <div style={{ fontSize: 13.5, color: 'var(--text-primary)' }}>
-                    <strong>⚠️ You have {pluralize(upcomingClashes.length, 'clash day', 'clash days')} ahead in Section {section}</strong>
+                    <strong>⚠️ Section {section} has {pluralize(upcomingClashes.length, 'clash day', 'clash days')} with overlapping classes</strong>
                     <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 2 }}>
                       Next overlap: <strong>{getClashContextDate(upcomingClashes[0].date, upcomingClashes[0].dow)}</strong>
                     </div>
@@ -533,7 +533,7 @@ export default function Home() {
                     className="clash-summary-btn"
                     onClick={() => openClashResolver(upcomingClashes[0])}
                   >
-                    Fix Next Clash →
+                    Find Alternate →
                   </button>
                 </div>
               ) : (
@@ -592,7 +592,7 @@ export default function Home() {
                       </div>
                       {d.hasClash && clashingCount > 0 && (
                         <button className="clash-alert-pill" onClick={() => openClashResolver(d)}>
-                          ⚠️ {pluralize(clashingCount, 'Class Clashes', 'Clashes')} — Fix Now
+                          ⚠️ {pluralize(clashingCount, 'Class Clashes', 'Clashes')} — Find Alternate
                         </button>
                       )}
                     </div>
@@ -649,9 +649,9 @@ export default function Home() {
                               </span>
                               <button
                                 className="resolve-clash-btn"
-                                onClick={() => openClashResolver(d, s.id)}
+                                onClick={() => openAlternatesForSession(s.id, 'schedule')}
                               >
-                                Fix This Clash →
+                                Find Alternate →
                               </button>
                             </div>
                           )}
@@ -671,7 +671,7 @@ export default function Home() {
         {activeTab === 'clash' && (
           <div>
             <button className="back-nav-btn" onClick={() => setActiveTab('schedule')}>
-              ← Back to My Schedule
+              ← Back to Schedule
             </button>
 
             {/* Date Hero Banner */}
@@ -856,7 +856,7 @@ export default function Home() {
                     style={{ width: '100%', justifyContent: 'center', color: 'var(--text-secondary)', padding: '6px 0', marginBottom: 0 }}
                     onClick={() => setActiveTab('schedule')}
                   >
-                    ← Done & Back to My Schedule
+                    ← Done & Back to Schedule
                   </button>
                 </div>
               </div>
@@ -1072,7 +1072,7 @@ export default function Home() {
                   style={{ width: '100%', justifyContent: 'center', marginTop: 4 }}
                   onClick={() => setActiveTab('schedule')}
                 >
-                  ← Back to My Schedule
+                  ← Back to Schedule
                 </button>
               </div>
             )}
@@ -1088,7 +1088,7 @@ export default function Home() {
               className="back-nav-btn"
               onClick={() => setActiveTab(alternatesReturnTab === 'clash' && activeClashDay ? 'clash' : 'schedule')}
             >
-              {alternatesReturnTab === 'clash' && activeClashDay ? '← Back to Clash Options' : '← Back to My Schedule'}
+              {alternatesReturnTab === 'clash' && activeClashDay ? '← Back to Clash Options' : '← Back to Schedule'}
             </button>
 
             {skippedSession && (
@@ -1100,7 +1100,7 @@ export default function Home() {
                   {skippedSession.course} {skippedSession.no ? `(Session #${skippedSession.no})` : ''}
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-                  Your regular Section {section} slot: {formatDisplayDate(skippedSession.date, skippedSession.dow)} at {formatMinTo12h(skippedSession.startMin)}
+                  Section {section} slot: {formatDisplayDate(skippedSession.date, skippedSession.dow)} at {formatMinTo12h(skippedSession.startMin)}
                 </div>
               </div>
             )}
@@ -1141,8 +1141,8 @@ export default function Home() {
                   >
                     <div className="recommendation-rank">
                       {isFree
-                        ? (idx === 0 ? '⭐ Best Match (Free for You)' : '✅ Clash-Free Option')
-                        : '⚠️ Overlaps With Your Section Timetable'}
+                        ? (idx === 0 ? '⭐ Best Match (Clash-Free)' : '✅ Clash-Free Option')
+                        : '⚠️ Overlaps With Section Timetable'}
                     </div>
 
                     <div className="alt-header-row">
@@ -1172,7 +1172,7 @@ export default function Home() {
 
                     {!isFree && alt.conflictsWith && alt.conflictsWith.length > 0 && (
                       <div style={{ fontSize: 12.5, color: 'var(--google-red)', fontWeight: 600, marginBottom: 10, background: 'var(--google-red-surface)', padding: '8px 10px', borderRadius: 6 }}>
-                        ⚠️ Overlaps with your {alt.conflictsWith.map(c => `${c.course} (${c.timeFormatted})`).join(', ')}
+                        ⚠️ Overlaps with Section {section} class: {alt.conflictsWith.map(c => `${c.course} (${c.timeFormatted})`).join(', ')}
                       </div>
                     )}
 
@@ -1242,7 +1242,7 @@ export default function Home() {
               </select>
 
               <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                Checking against your <strong>Section {section}</strong> timetable to show which slots are free.
+                Checking against <strong>Section {section}</strong> timetable to show which slots are free.
               </div>
             </div>
 
@@ -1269,7 +1269,7 @@ export default function Home() {
                       <div className="card-badges">
                         {isOwnSectionSlot ? (
                           <span className="pill-badge badge-session">
-                            📘 Your Section ({section}){otherConflicts.length > 0 ? ' · Clash' : ''}
+                            📘 Section {section}{otherConflicts.length > 0 ? ' · Clash' : ''}
                           </span>
                         ) : r.free ? (
                           <span className="pill-badge" style={{ background: 'var(--google-green-surface)', color: 'var(--google-green)', fontWeight: 700 }}>
@@ -1295,7 +1295,7 @@ export default function Home() {
                     )}
                     {!isOwnSectionSlot && !r.free && r.conflictsWith?.length > 0 && (
                       <div style={{ fontSize: 12.5, color: 'var(--google-red)', fontWeight: 600, marginBottom: 8 }}>
-                        Overlaps with your: {r.conflictsWith.map(c => `${c.course} (${c.timeFormatted})`).join(', ')}
+                        Overlaps with Section {section}: {r.conflictsWith.map(c => `${c.course} (${c.timeFormatted})`).join(', ')}
                       </div>
                     )}
 
@@ -1331,11 +1331,11 @@ export default function Home() {
                 </div>
                 <div className="help-step-item">
                   <span className="help-step-num">2</span>
-                  <div><strong>Look for red boxes</strong> saying &quot;Fix This Clash →&quot; on any day where two classes happen at the same time.</div>
+                  <div><strong>Look for red badges or cards</strong> saying &quot;Find Alternate →&quot; on any day where two classes happen at the same time.</div>
                 </div>
                 <div className="help-step-item">
                   <span className="help-step-num">3</span>
-                  <div><strong>Pick Choice 1 or Choice 2</strong>, tap Confirm, and copy your plan for WhatsApp or Notes.</div>
+                  <div><strong>Pick an alternate session or compare choices</strong>, tap Confirm, and copy your plan for WhatsApp or Notes.</div>
                 </div>
               </div>
             </div>
@@ -1343,10 +1343,10 @@ export default function Home() {
             <div className="form-card">
               <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>What the Colors & Labels Mean</h3>
               <div style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-                <div>🔴 <strong>Red Border (Clash):</strong> Two classes overlap at the same time in your section.</div>
-                <div>🟢 <strong>Green Badge (Free):</strong> Attending another section at this time will NOT clash with your classes.</div>
-                <div>🟡 <strong>Amber Warning (Overlaps):</strong> You already have another class at that alternate time.</div>
-                <div>🔵 <strong>Blue Border (Regular Class):</strong> Normal scheduled class in your section.</div>
+                <div>🔴 <strong>Red Border (Clash):</strong> Two classes overlap at the same time in Section {section}.</div>
+                <div>🟢 <strong>Green Badge (Free):</strong> Attending another section at this time will NOT clash with Section {section} classes.</div>
+                <div>🟡 <strong>Amber Warning (Overlaps):</strong> Section {section} has another class scheduled at that alternate time.</div>
+                <div>🔵 <strong>Blue Border (Regular Class):</strong> Normal scheduled class in Section {section}.</div>
               </div>
             </div>
 
