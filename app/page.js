@@ -597,8 +597,7 @@ export default function Home() {
                       )}
                     </div>
 
-                    {d.sessions.map(s => {
-                      const isCancelled = s.status === 'Cancelled';
+                    {d.sessions.filter(s => s.status === 'Active').map(s => {
                       const isHoliday = s.type === 'Holiday';
                       const timeStr = `${formatMinTo12h(s.startMin)} – ${formatMinTo12h(s.endMin)}`;
 
@@ -621,7 +620,7 @@ export default function Home() {
                       return (
                         <div
                           key={s.id}
-                          className={`class-card ${s.isClashing ? 'clash' : ''} ${isCancelled ? 'cancelled' : ''}`}
+                          className={`class-card ${s.isClashing ? 'clash' : ''}`}
                         >
                           <div className="card-top-row">
                             <div className="course-name">{s.course}</div>
@@ -634,7 +633,6 @@ export default function Home() {
                                 <span className="pill-badge" style={{ background: '#EEEEEE', color: '#3C4043' }}>{s.type}</span>
                               )}
                               {s.isClashing && <span className="pill-badge badge-clash">Clash</span>}
-                              {isCancelled && <span className="pill-badge badge-cancelled">❌ Cancelled</span>}
                             </div>
                           </div>
 
@@ -643,12 +641,6 @@ export default function Home() {
                             <span className="detail-item">📍 Room: <strong>{s.room || 'TBD'}</strong></span>
                             {s.section === 'ALL' && <span className="detail-item">👥 All Sections</span>}
                           </div>
-
-                          {isCancelled && (
-                            <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 8 }}>
-                              This class was cancelled (struck through in master sheet) and does not count toward session numbers.
-                            </div>
-                          )}
 
                           {s.isClashing && (
                             <div className="clash-warning-box">
@@ -1354,7 +1346,7 @@ export default function Home() {
                 <div>🔴 <strong>Red Border (Clash):</strong> Two classes overlap at the same time in your section.</div>
                 <div>🟢 <strong>Green Badge (Free):</strong> Attending another section at this time will NOT clash with your classes.</div>
                 <div>🟡 <strong>Amber Warning (Overlaps):</strong> You already have another class at that alternate time.</div>
-                <div>⬜ <strong>Dashed Grey (Cancelled):</strong> Crossed out in the official timetable sheet and skipped from Session # counting.</div>
+                <div>🔵 <strong>Blue Border (Regular Class):</strong> Normal scheduled class in your section.</div>
               </div>
             </div>
 
@@ -1365,7 +1357,6 @@ export default function Home() {
                 <div><strong>Auto-Update Schedule:</strong> Checks Google Sheets every {statusInfo?.refreshMinutes || 5} minutes</div>
                 {lastSyncedTime && <div><strong>Last Checked (IST):</strong> {lastSyncedTime}</div>}
                 <div><strong>Total Academic Classes Tracked:</strong> {statusInfo?.counts?.active ?? '—'}</div>
-                <div><strong>Cancelled Sessions Skipped:</strong> {statusInfo?.counts?.cancelled ?? '—'}</div>
                 <div><strong>Status:</strong> {statusInfo?.status === 'HEALTHY' ? '✅ Up to date & working normally' : 'Checking…'}</div>
               </div>
               <button

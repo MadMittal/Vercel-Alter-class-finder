@@ -78,10 +78,11 @@ check('Cancelled sessions and ALL-section sessions do NOT consume Session #', ()
     { date: '2026-11-18', dow: 'Wed', week: 1, section: 'A', startMin: 540, endMin: 660, course: 'Unit Economics', type: 'Course', status: 'Active', room: 'CDS 705', rawText: 'x' },
     { date: '2026-11-19', dow: 'Thu', week: 1, section: 'ALL', startMin: 1125, endMin: 1245, course: 'Market Research', type: 'Course', status: 'Active', room: 'CDS 706', rawText: 'x' },
   ]);
+  assert.equal(ds.sessions.filter(s => s.status === 'Cancelled').length, 0);
   const ue = ds.sessions.filter(s => s.course === 'Unit Economics');
+  assert.equal(ue.length, 2);
   assert.equal(ue[0].no, 1);
-  assert.equal(ue[1].no, null);
-  assert.equal(ue[2].no, 2);
+  assert.equal(ue[1].no, 2);
   assert.equal(ds.sessions.find(s => s.section === 'ALL').no, null);
 });
 
@@ -89,9 +90,10 @@ console.log('\n=== LEVEL 2: LIVE SHEET INGESTION & REAL CLASH LOGIC ===');
 
 const liveDataset = await getLiveDataset(true);
 
-check(`Live ingestion uses XLSX with >0 cancelled sessions detected`, () => {
+check(`Live ingestion uses XLSX, detects cancellations, and omits cancelled classes from dataset`, () => {
   assert.equal(liveDataset.meta.sourceFormat, 'xlsx');
   assert.ok(liveDataset.meta.counts.cancelled > 0, `Expected cancelled > 0, got ${liveDataset.meta.counts.cancelled}`);
+  assert.equal(liveDataset.sessions.filter(s => s.status === 'Cancelled').length, 0);
   assert.ok(liveDataset.meta.counts.active > 800, `Expected active > 800, got ${liveDataset.meta.counts.active}`);
 });
 
