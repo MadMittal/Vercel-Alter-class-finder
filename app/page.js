@@ -1,225 +1,306 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
+
+function getClientTodayIST() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function addDaysISO(isoDate, delta) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+}
+
+function pluralize(count, singular, plural) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 
 export default function Home() {
   const [section, setSection] = useState('A');
+  const [sectionReady, setSectionReady] = useState(false);
   const [dateFilter, setDateFilter] = useState('today_tomorrow');
+  const [onlyClashes, setOnlyClashes] = useState(false);
   const [activeTab, setActiveTab] = useState('schedule');
+  const [alternatesReturnTab, setAlternatesReturnTab] = useState('schedule');
+
   const [bootstrap, setBootstrap] = useState(null);
   const [timetableDays, setTimetableDays] = useState([]);
+  const [upcomingClashes, setUpcomingClashes] = useState([]);
   const [loadingSchedule, setLoadingSchedule] = useState(true);
-  
+
   // Clash resolver state
   const [activeClashDay, setActiveClashDay] = useState(null);
   const [clashAdvice, setClashAdvice] = useState(null);
+  const [selectedClusterIdx, setSelectedClusterIdx] = useState(0);
   const [loadingClash, setLoadingClash] = useState(false);
   const [confirmedPlan, setConfirmedPlan] = useState(null);
-  
+
   // Alternates tab state
   const [skippedSession, setSkippedSession] = useState(null);
   const [alternatesData, setAlternatesData] = useState(null);
   const [loadingAlternates, setLoadingAlternates] = useState(false);
 
   // Subject browser state
+  const [courseSearch, setCourseSearch] = useState('');
   const [selectedCourse, setSelectedCourse] = useState('');
   const [selectedSessionNo, setSelectedSessionNo] = useState('');
   const [subjectOfferings, setSubjectOfferings] = useState([]);
   const [loadingSubject, setLoadingSubject] = useState(false);
 
-  // Status diagnostics
+  // Status & notifications
   const [statusInfo, setStatusInfo] = useState(null);
+  const [lastSyncedTime, setLastSyncedTime] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
-  // Initial load
+  // Sequence counters to prevent stale async responses on rapid section/filter clicks
+  const timetableReqSeq = useRef(0);
+  const clashReqSeq = useRef(0);
+  const altReqSeq = useRef(0);
+  const subjectReqSeq = useRef(0);
+
+  // 1. Read saved section first, then load initial bootstrap + status + 5-min auto-sync timer
   useEffect(() => {
-    const savedSec = localStorage.getItem('mu_user_section');
-    if (savedSec && SECTIONS.includes(savedSec)) {
-      setSection(savedSec);
-    }
-    fetchBootstrap();
-    fetchStatus();
+    try {
+      const savedSec = localStorage.getItem('mu_user_section');
+      if (savedSec && SECTIONS.includes(savedSec)) {
+        setSection(savedSec);
+      }
+    } catch (_) {}
+    setSectionReady(true);
+
+    fetchAllLiveMeta(false);
+    const interval = setInterval(() => {
+      fetchAllLiveMeta(false);
+    }, FIVE_MINUTES_MS);
+    return () => clearInterval(interval);
   }, []);
 
-  // Fetch timetable when section or dateFilter changes
+  // 2. Fetch timetable once section is ready and whenever section / filter / tab returns to schedule
   useEffect(() => {
+    if (!sectionReady) return;
     if (activeTab === 'schedule') {
       fetchTimetable();
+    } else if (activeTab === 'subject' && selectedCourse && selectedSessionNo) {
+      // Keep Browse Subjects conflict badges accurate when user switches Section A-H
+      fetchSubjectOfferings(selectedCourse, selectedSessionNo, section);
     }
-  }, [section, dateFilter, activeTab]);
+  }, [sectionReady, section, dateFilter, activeTab]);
 
   function showToast(msg) {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(''), 2500);
+    setTimeout(() => setToastMessage(''), 2600);
+  }
+
+  function stampSyncClock() {
+    const nowStr = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date());
+    setLastSyncedTime(nowStr);
+  }
+
+  async function fetchAllLiveMeta(force = false) {
+    if (force) setRefreshing(true);
+    try {
+      const q = force ? '?refresh=1' : '';
+      const [bRes, sRes] = await Promise.all([
+        fetch(`/api/bootstrap${q}`),
+        fetch('/api/status'),
+      ]);
+      const [bJson, sJson] = await Promise.all([bRes.json(), sRes.json()]);
+      if (bJson.ok) setBootstrap(bJson.data);
+      if (sJson.ok) setStatusInfo(sJson.data);
+      stampSyncClock();
+      if (force && sectionReady && activeTab === 'schedule') {
+        await fetchTimetable();
+        showToast('Timetable synced with Google Sheets!');
+      }
+    } catch (err) {
+      if (force) showToast('Could not refresh right now');
+    } finally {
+      if (force) setRefreshing(false);
+    }
   }
 
   function handleSectionChange(sec) {
     setSection(sec);
-    localStorage.setItem('mu_user_section', sec);
+    try {
+      localStorage.setItem('mu_user_section', sec);
+    } catch (_) {}
     if (activeTab === 'clash' || activeTab === 'alternates') {
       setActiveTab('schedule');
     }
   }
 
-  async function fetchBootstrap() {
-    try {
-      const res = await fetch('/api/bootstrap');
-      const json = await res.json();
-      if (json.ok) {
-        setBootstrap(json.data);
-      }
-    } catch (err) {
-      console.error('Bootstrap failed:', err);
-    }
-  }
-
-  async function fetchStatus() {
-    try {
-      const res = await fetch('/api/status');
-      const json = await res.json();
-      if (json.ok) {
-        setStatusInfo(json.data);
-      }
-    } catch (err) {
-      console.error('Status fetch failed:', err);
-    }
-  }
-
   function getDateRange() {
-    const today = bootstrap?.today || new Date().toISOString().slice(0, 10);
-    const [y, m, d] = today.split('-').map(Number);
-
+    const today = bootstrap?.today || getClientTodayIST();
     if (dateFilter === 'today_tomorrow') {
-      const tomorrow = new Date(Date.UTC(y, m - 1, d + 1));
-      return { from: today, to: tomorrow.toISOString().slice(0, 10) };
+      return { from: today, to: addDaysISO(today, 1), isAll: false };
     } else if (dateFilter === '7d') {
-      const to7 = new Date(Date.UTC(y, m - 1, d + 7));
-      return { from: today, to: to7.toISOString().slice(0, 10) };
+      return { from: today, to: addDaysISO(today, 7), isAll: false };
     } else if (dateFilter === '15d') {
-      const to15 = new Date(Date.UTC(y, m - 1, d + 15));
-      return { from: today, to: to15.toISOString().slice(0, 10) };
+      return { from: today, to: addDaysISO(today, 15), isAll: false };
     } else {
-      return { from: '2026-11-01', to: '2027-03-31' };
+      return { from: null, to: null, isAll: true };
     }
   }
 
   async function fetchTimetable() {
+    const reqId = ++timetableReqSeq.current;
     setLoadingSchedule(true);
     try {
-      const { from, to } = getDateRange();
-      const res = await fetch(`/api/timetable?section=${section}&from=${from}&to=${to}`);
+      const { from, to, isAll } = getDateRange();
+      const url = isAll
+        ? `/api/timetable?section=${section}&range=all`
+        : `/api/timetable?section=${section}&from=${from}&to=${to}`;
+      const res = await fetch(url);
       const json = await res.json();
+      if (reqId !== timetableReqSeq.current) return;
       if (json.ok) {
         setTimetableDays(json.data.days || []);
+        setUpcomingClashes(json.data.upcomingClashes || []);
       } else {
         setTimetableDays([]);
+        setUpcomingClashes([]);
       }
     } catch (err) {
-      showToast('Error loading schedule');
+      if (reqId === timetableReqSeq.current) showToast('Error loading schedule');
     } finally {
-      setLoadingSchedule(false);
+      if (reqId === timetableReqSeq.current) setLoadingSchedule(false);
     }
   }
 
-  async function openClashResolver(day) {
-    setActiveClashDay(day);
+  async function openClashResolver(dayOrDate, focusSessionId = null) {
+    const reqId = ++clashReqSeq.current;
+    const dayObj = typeof dayOrDate === 'string'
+      ? { date: dayOrDate, dow: '' }
+      : dayOrDate;
+
+    setActiveClashDay(dayObj);
     setConfirmedPlan(null);
+    setClashAdvice(null);
+    setSelectedClusterIdx(0);
     setActiveTab('clash');
     setLoadingClash(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'auto' });
 
     try {
-      const res = await fetch(`/api/clash-advice?section=${section}&date=${day.date}`);
+      const q = focusSessionId ? `&sessionId=${encodeURIComponent(focusSessionId)}` : '';
+      const res = await fetch(`/api/clash-advice?section=${section}&date=${dayObj.date}${q}`);
       const json = await res.json();
+      if (reqId !== clashReqSeq.current) return;
       if (json.ok) {
         setClashAdvice(json.data);
+        setSelectedClusterIdx(json.data.selectedClusterIndex || 0);
+        if (!dayObj.dow && json.data.dow) {
+          setActiveClashDay({ ...dayObj, dow: json.data.dow });
+        }
       } else {
         showToast(json.error?.message || 'Error analyzing clash');
       }
     } catch (err) {
-      showToast('Error loading clash recommendations');
+      if (reqId === clashReqSeq.current) showToast('Error loading clash options');
     } finally {
-      setLoadingClash(false);
+      if (reqId === clashReqSeq.current) setLoadingClash(false);
     }
   }
 
+  const activeCluster = clashAdvice?.clusters?.[selectedClusterIdx] || clashAdvice;
+
   function handleConfirmPlan(keptSessionId) {
-    if (!clashAdvice?.evaluatedSessions) return;
-    const sessions = clashAdvice.evaluatedSessions;
+    const sessions = activeCluster?.evaluatedSessions;
+    if (!sessions || sessions.length === 0) return;
+
     const kept = sessions.find(s => s.session.id === keptSessionId);
-    const other = sessions.find(s => s.session.id !== keptSessionId);
+    const others = sessions.filter(s => s.session.id !== keptSessionId);
+    if (!kept || others.length === 0) return;
 
-    if (!kept || !other) return;
-
-    const dateFormatted = formatDisplayDate(clashAdvice.date, clashAdvice.dow);
+    const dateFormatted = formatDisplayDate(clashAdvice.date, activeCluster.dow || clashAdvice.dow);
     const keptTime = formatMinTo12h(kept.session.startMin) + ' – ' + formatMinTo12h(kept.session.endMin);
 
-    const isSameDayAlt = other.bestAlternate && other.bestAlternate.date === clashAdvice.date;
-    const isAltEarlier = isSameDayAlt && (other.bestAlternate.startMin < kept.session.startMin);
+    const allSkippedHaveFreeAlt = others.every(o => o.bestAlternate && o.bestAlternate.free);
+    const anyMissingAlt = others.some(o => o.hasNoAlternates || !o.bestAlternate);
+    const primaryOther = others[0];
+    const isSingleSameDayFree = others.length === 1 &&
+      primaryOther.bestAlternate &&
+      primaryOther.bestAlternate.free &&
+      primaryOther.bestAlternate.date === clashAdvice.date;
+    const isAltEarlier = isSingleSameDayFree && (primaryOther.bestAlternate.startMin < kept.session.startMin);
 
-    let copyText = '';
-    if (isSameDayAlt && isAltEarlier) {
-      copyText = `🎓 Masters' Union Clash Plan (Section ${section})\n` +
-        `📅 Date: ${dateFormatted}\n` +
-        `-----------------------------------------\n` +
-        `⚡ SAME-DAY ATTENDANCE PLAN:\n` +
-        `1️⃣ ${other.bestAlternate.timeFormatted}: Attend ${other.session.course} ${other.session.no ? '(Session #' + other.session.no + ')' : ''}\n` +
-        `   • Room: ${other.bestAlternate.room || 'TBD'} (with Section ${other.bestAlternate.sections.join(', ')})\n\n` +
-        `2️⃣ ${keptTime}: Attend ${kept.session.course} ${kept.session.no ? '(Session #' + kept.session.no + ')' : ''}\n` +
-        `   • Room: ${kept.session.room || 'TBD'} (with Section ${section})\n` +
-        `-----------------------------------------\n` +
-        `⚠️ Note: If either class has a Quiz or Graded Evaluation, attend that class in your own section and take the other class in an alternate slot or section.`;
-    } else if (isSameDayAlt && !isAltEarlier) {
-      copyText = `🎓 Masters' Union Clash Plan (Section ${section})\n` +
-        `📅 Date: ${dateFormatted}\n` +
-        `-----------------------------------------\n` +
-        `⚡ SAME-DAY ATTENDANCE PLAN:\n` +
-        `1️⃣ ${keptTime}: Attend ${kept.session.course} ${kept.session.no ? '(Session #' + kept.session.no + ')' : ''}\n` +
+    let copyText = `🎓 Masters' Union Class Plan (Section ${section})\n📅 Date: ${dateFormatted}\n-----------------------------------------\n`;
+
+    if (isSingleSameDayFree && isAltEarlier) {
+      const alt = primaryOther.bestAlternate;
+      copyText += `⚡ SAME-DAY ATTENDANCE PLAN:\n` +
+        `1️⃣ ${alt.timeFormatted}: Attend ${primaryOther.session.course}${primaryOther.session.no ? ` (Session #${primaryOther.session.no})` : ''}\n` +
+        `   • Room: ${alt.room || 'TBD'} (with Section ${alt.sections.join(', ')})\n\n` +
+        `2️⃣ ${keptTime}: Attend ${kept.session.course}${kept.session.no ? ` (Session #${kept.session.no})` : ''}\n` +
+        `   • Room: ${kept.session.room || 'TBD'} (with Section ${section})\n`;
+    } else if (isSingleSameDayFree && !isAltEarlier) {
+      const alt = primaryOther.bestAlternate;
+      copyText += `⚡ SAME-DAY ATTENDANCE PLAN:\n` +
+        `1️⃣ ${keptTime}: Attend ${kept.session.course}${kept.session.no ? ` (Session #${kept.session.no})` : ''}\n` +
         `   • Room: ${kept.session.room || 'TBD'} (with Section ${section})\n\n` +
-        `2️⃣ ${other.bestAlternate.timeFormatted}: Attend ${other.session.course} ${other.session.no ? '(Session #' + other.session.no + ')' : ''}\n` +
-        `   • Room: ${other.bestAlternate.room || 'TBD'} (with Section ${other.bestAlternate.sections.join(', ')})\n` +
-        `-----------------------------------------\n` +
-        `⚠️ Note: If either class has a Quiz or Graded Evaluation, attend that class in your own section and take the other class in an alternate slot or section.`;
+        `2️⃣ ${alt.timeFormatted}: Attend ${primaryOther.session.course}${primaryOther.session.no ? ` (Session #${primaryOther.session.no})` : ''}\n` +
+        `   • Room: ${alt.room || 'TBD'} (with Section ${alt.sections.join(', ')})\n`;
     } else {
-      const altDetails = other.bestAlternate
-        ? `${formatDisplayDate(other.bestAlternate.date, other.bestAlternate.dow)} @ ${other.bestAlternate.timeFormatted} in Room ${other.bestAlternate.room} (with Section ${other.bestAlternate.sections.join(', ')})`
-        : 'No alternate scheduled in other sections.';
-      copyText = `🎓 Masters' Union Clash Plan (Section ${section})\n` +
-        `📅 Date: ${dateFormatted} (${clashAdvice.timeFormatted || keptTime})\n` +
-        `-----------------------------------------\n` +
-        `✅ 1. ATTEND ON ${dateFormatted}:\n` +
-        `   • ${kept.session.course} ${kept.session.no ? '(Session #' + kept.session.no + ')' : ''}\n` +
-        `   • Room: ${kept.session.room || 'TBD'} @ ${keptTime}\n\n` +
-        `🎯 2. TAKE ALTERNATE:\n` +
-        `   • ${other.session.course} ${other.session.no ? '(Session #' + other.session.no + ')' : ''}\n` +
-        `   • ${altDetails}\n` +
-        `-----------------------------------------\n` +
-        `⚠️ Note: If either class has a Quiz or Graded Evaluation, attend that class in your own section and take the other class in an alternate slot or section.`;
+      copyText += `1️⃣ ATTEND ON ${dateFormatted} (${keptTime}):\n` +
+        `   • ${kept.session.course}${kept.session.no ? ` (Session #${kept.session.no})` : ''}\n` +
+        `   • Room: ${kept.session.room || 'TBD'} (Section ${section})\n\n`;
+      others.forEach((o, i) => {
+        const labelNo = others.length > 1 ? `2${String.fromCharCode(97 + i)}` : '2️⃣';
+        if (o.bestAlternate) {
+          const alt = o.bestAlternate;
+          const overlapNote = !alt.free && alt.conflictsWith?.length
+            ? ` ⚠️ WARNING: Overlaps with ${alt.conflictsWith.map(c => `${c.course} (${c.timeFormatted})`).join(', ')}`
+            : '';
+          copyText += `${labelNo} ALTERNATE FOR ${o.session.course}${o.session.no ? ` (Session #${o.session.no})` : ''}:\n` +
+            `   • ${formatDisplayDate(alt.date, alt.dow)} @ ${alt.timeFormatted} | Room ${alt.room || 'TBD'} (Section ${alt.sections.join(', ')})${overlapNote}\n\n`;
+        } else {
+          copyText += `${labelNo} ${o.session.course}: No alternate slot available in other sections.\n\n`;
+        }
+      });
     }
+
+    copyText += `-----------------------------------------\n⚠️ Note: If either class has a Quiz or Graded Evaluation, attend that class in your own section and take the other class in an alternate slot or section.`;
 
     setConfirmedPlan({
       kept,
-      other,
+      others,
       dateFormatted,
       keptTime,
       copyText,
-      isSameDayAlt,
+      allSkippedHaveFreeAlt,
+      anyMissingAlt,
+      isSingleSameDayFree,
       isAltEarlier,
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
-  async function openAlternatesForSession(sessionId) {
+  async function openAlternatesForSession(sessionId, returnTo = 'schedule') {
+    const reqId = ++altReqSeq.current;
+    setAlternatesReturnTab(returnTo);
     setActiveTab('alternates');
     setLoadingAlternates(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'auto' });
 
     try {
-      const res = await fetch(`/api/alternates?section=${section}&sessionId=${sessionId}`);
+      const res = await fetch(`/api/alternates?section=${section}&sessionId=${encodeURIComponent(sessionId)}`);
       const json = await res.json();
+      if (reqId !== altReqSeq.current) return;
       if (json.ok) {
         setAlternatesData(json.data);
         setSkippedSession(json.data.skipped);
@@ -227,40 +308,69 @@ export default function Home() {
         showToast(json.error?.message || 'Error finding alternates');
       }
     } catch (err) {
-      showToast('Error loading alternates');
+      if (reqId === altReqSeq.current) showToast('Error loading alternates');
     } finally {
-      setLoadingAlternates(false);
+      if (reqId === altReqSeq.current) setLoadingAlternates(false);
     }
   }
 
-  async function handleCourseChange(courseName) {
+  function handleCourseChange(courseName) {
     setSelectedCourse(courseName);
     setSelectedSessionNo('');
     setSubjectOfferings([]);
   }
 
-  async function handleSessionChange(no) {
-    setSelectedSessionNo(no);
-    if (!selectedCourse || !no) return;
+  async function fetchSubjectOfferings(courseName, sessionNo, sec) {
+    const reqId = ++subjectReqSeq.current;
+    if (!courseName || !sessionNo) return;
     setLoadingSubject(true);
 
     try {
-      const res = await fetch(`/api/subject?course=${encodeURIComponent(selectedCourse)}&sessionNo=${no}&section=${section}`);
+      const res = await fetch(
+        `/api/subject?course=${encodeURIComponent(courseName)}&sessionNo=${encodeURIComponent(sessionNo)}&section=${sec}`
+      );
       const json = await res.json();
+      if (reqId !== subjectReqSeq.current) return;
       if (json.ok) {
         setSubjectOfferings(json.data.rows || []);
       }
     } catch (err) {
-      showToast('Error loading subject offerings');
+      if (reqId === subjectReqSeq.current) showToast('Error loading subject offerings');
     } finally {
-      setLoadingSubject(false);
+      if (reqId === subjectReqSeq.current) setLoadingSubject(false);
     }
   }
 
-  function copyToClipboard(text) {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(text);
-      showToast('Copied to clipboard!');
+  function handleSessionChange(no) {
+    setSelectedSessionNo(no);
+    if (!selectedCourse || !no) {
+      setSubjectOfferings([]);
+      return;
+    }
+    fetchSubjectOfferings(selectedCourse, no, section);
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        showToast('Copied to clipboard!');
+        return;
+      }
+    } catch (_) {}
+
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast(ok ? 'Copied to clipboard!' : 'Please copy the text manually');
+    } catch (_) {
+      showToast('Please copy the text manually');
     }
   }
 
@@ -275,27 +385,31 @@ export default function Home() {
 
   function formatDisplayDate(isoDate, dow) {
     if (!isoDate) return '';
-    const parts = isoDate.split('-').map(Number);
-    const y = parts[0], mo = parts[1], d = parts[2];
-    return `${dow || ''}, ${d} ${MONTHS[mo - 1]}`;
+    const [y, mo, d] = isoDate.split('-').map(Number);
+    const curYear = parseInt((bootstrap?.today || getClientTodayIST()).slice(0, 4), 10);
+    const yrSuffix = y !== curYear ? ` '${String(y).slice(-2)}` : '';
+    return `${dow ? dow + ', ' : ''}${d} ${MONTHS[mo - 1]}${yrSuffix}`;
   }
 
   function getClashContextDate(isoDate, dow) {
     if (!isoDate) return '';
     const formatted = formatDisplayDate(isoDate, dow);
-    const today = bootstrap?.todayDate || todayISO;
-    if (today && isoDate === today) return `${formatted} (Today)`;
-    if (today) {
-      try {
-        const d = new Date(today);
-        d.setDate(d.getDate() + 1);
-        if (isoDate === d.toISOString().slice(0, 10)) return `${formatted} (Tomorrow)`;
-      } catch (_) {}
-    }
+    const today = bootstrap?.today || getClientTodayIST();
+    if (isoDate === today) return `${formatted} (Today)`;
+    if (isoDate === addDaysISO(today, 1)) return `${formatted} (Tomorrow)`;
     return formatted;
   }
 
-  const todayISO = bootstrap?.today || new Date().toISOString().slice(0, 10);
+  function formatSubjectCopyText(item) {
+    const sessPart = item.no ? ` Session #${item.no}` : '';
+    return `${item.course}${sessPart} | ${item.dow} ${item.date} | ${item.timeFormatted} | Room: ${item.room || 'TBD'} | Section ${item.sections.join(', ')}`;
+  }
+
+  const todayISO = bootstrap?.today || getClientTodayIST();
+  const visibleDays = onlyClashes ? timetableDays.filter(d => d.hasClash) : timetableDays;
+  const filteredCourses = (bootstrap?.courses || []).filter(c =>
+    c.name.toLowerCase().includes(courseSearch.trim().toLowerCase())
+  );
   const selectedCourseObj = bootstrap?.courses?.find(c => c.name === selectedCourse);
 
   return (
@@ -307,10 +421,15 @@ export default function Home() {
             <img src="/mu-logo.png" alt="Masters' Union" className="mu-logo-img" />
             <span className="app-tag">Alt-Class Finder</span>
           </div>
-          <div id="sync-pill" className="sync-status-pill">
+          <button
+            id="sync-pill"
+            className="sync-status-pill"
+            onClick={() => fetchAllLiveMeta(true)}
+            title="Auto-updates every 5 minutes. Click to refresh now."
+          >
             <span className="pulse-indicator"></span>
-            <span>Vercel Edge Active</span>
-          </div>
+            <span>{refreshing ? 'Syncing…' : 'Live Sync · 5m'}</span>
+          </button>
         </div>
       </header>
 
@@ -318,7 +437,7 @@ export default function Home() {
         {/* Section Selector */}
         <div className="section-nav-wrapper">
           <div className="section-nav-header">
-            <span>SELECT YOUR SECTION:</span>
+            <span>1. Pick Your Section:</span>
             <span style={{ color: 'var(--google-blue)', fontWeight: 700 }}>Section {section}</span>
           </div>
           <div className="section-chips-grid">
@@ -337,7 +456,7 @@ export default function Home() {
         {/* Tab Navigation */}
         <nav className="nav-tabs">
           <button
-            className={`nav-tab-btn ${activeTab === 'schedule' ? 'active' : ''}`}
+            className={`nav-tab-btn ${activeTab === 'schedule' || activeTab === 'clash' || activeTab === 'alternates' ? 'active' : ''}`}
             onClick={() => setActiveTab('schedule')}
           >
             📅 My Schedule
@@ -352,7 +471,7 @@ export default function Home() {
             className={`nav-tab-btn ${activeTab === 'status' ? 'active' : ''}`}
             onClick={() => setActiveTab('status')}
           >
-            ℹ️ Status & Help
+            ℹ️ Help & Status
           </button>
         </nav>
 
@@ -364,30 +483,67 @@ export default function Home() {
             {/* Filter Pills */}
             <div className="filter-pills-bar">
               <button
-                className={`filter-pill ${dateFilter === 'today_tomorrow' ? 'active' : ''}`}
-                onClick={() => setDateFilter('today_tomorrow')}
+                className={`filter-pill ${dateFilter === 'today_tomorrow' && !onlyClashes ? 'active' : ''}`}
+                onClick={() => { setOnlyClashes(false); setDateFilter('today_tomorrow'); }}
               >
                 ⚡ Today & Tomorrow
               </button>
               <button
-                className={`filter-pill ${dateFilter === '7d' ? 'active' : ''}`}
-                onClick={() => setDateFilter('7d')}
+                className={`filter-pill ${dateFilter === '7d' && !onlyClashes ? 'active' : ''}`}
+                onClick={() => { setOnlyClashes(false); setDateFilter('7d'); }}
               >
                 📅 Next 7 Days
               </button>
               <button
-                className={`filter-pill ${dateFilter === '15d' ? 'active' : ''}`}
-                onClick={() => setDateFilter('15d')}
+                className={`filter-pill ${dateFilter === '15d' && !onlyClashes ? 'active' : ''}`}
+                onClick={() => { setOnlyClashes(false); setDateFilter('15d'); }}
               >
                 📅 Next 15 Days
               </button>
               <button
-                className={`filter-pill ${dateFilter === 'all' ? 'active' : ''}`}
-                onClick={() => setDateFilter('all')}
+                className={`filter-pill ${dateFilter === 'all' && !onlyClashes ? 'active' : ''}`}
+                onClick={() => { setOnlyClashes(false); setDateFilter('all'); }}
               >
                 🗓️ Entire Term
               </button>
+              {upcomingClashes.length > 0 && (
+                <button
+                  className={`filter-pill clash-toggle ${onlyClashes ? 'active' : ''}`}
+                  onClick={() => {
+                    if (!onlyClashes && dateFilter === 'today_tomorrow') setDateFilter('all');
+                    setOnlyClashes(!onlyClashes);
+                  }}
+                >
+                  ⚠️ Clashes Only ({upcomingClashes.length})
+                </button>
+              )}
             </div>
+
+            {/* Upcoming Clashes Summary Alert */}
+            {!loadingSchedule && (
+              upcomingClashes.length > 0 ? (
+                <div className="clash-summary-banner">
+                  <div style={{ fontSize: 13.5, color: 'var(--text-primary)' }}>
+                    <strong>⚠️ You have {pluralize(upcomingClashes.length, 'clash day', 'clash days')} ahead in Section {section}</strong>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 2 }}>
+                      Next overlap: <strong>{getClashContextDate(upcomingClashes[0].date, upcomingClashes[0].dow)}</strong>
+                    </div>
+                  </div>
+                  <button
+                    className="clash-summary-btn"
+                    onClick={() => openClashResolver(upcomingClashes[0])}
+                  >
+                    Fix Next Clash →
+                  </button>
+                </div>
+              ) : (
+                <div className="clash-summary-banner all-good">
+                  <div style={{ fontSize: 13.5, color: 'var(--google-green)', fontWeight: 700 }}>
+                    ✅ No upcoming class clashes found for Section {section}!
+                  </div>
+                </div>
+              )
+            )}
 
             {/* Schedule Items */}
             {loadingSchedule ? (
@@ -401,20 +557,29 @@ export default function Home() {
                   <div className="skeleton-bar" style={{ height: 14, width: '60%' }}></div>
                 </div>
               </div>
-            ) : timetableDays.length === 0 ? (
+            ) : visibleDays.length === 0 ? (
               <div className="empty-state-box">
                 <div style={{ fontSize: 32, marginBottom: 8 }}>☕</div>
                 <p style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)', marginBottom: 4 }}>
-                  No classes scheduled
+                  No classes scheduled for Section {section}
                 </p>
-                <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
-                  {dateFilter === 'today_tomorrow'
-                    ? 'You have no classes today or tomorrow! Tap "Next 7 Days" or "Next 15 Days" to view upcoming classes.'
-                    : 'No sessions found in this date range.'}
+                <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 14 }}>
+                  {onlyClashes
+                    ? 'No clashes in the selected dates! Tap below to see all dates or upcoming clashes.'
+                    : dateFilter === 'today_tomorrow'
+                      ? 'Section ' + section + ' has no scheduled classes today or tomorrow.'
+                      : 'No sessions found in this date range.'}
                 </p>
+                <button
+                  className="action-attend-btn"
+                  style={{ maxWidth: 260, margin: '0 auto' }}
+                  onClick={() => { setOnlyClashes(false); setDateFilter('7d'); }}
+                >
+                  📅 View Next 7 Days →
+                </button>
               </div>
             ) : (
-              timetableDays.map(d => {
+              visibleDays.map(d => {
                 const isToday = d.date === todayISO;
                 const clashingCount = d.sessions.filter(s => s.isClashing).length;
 
@@ -426,15 +591,32 @@ export default function Home() {
                         {isToday && <span className="today-badge">Today</span>}
                       </div>
                       {d.hasClash && clashingCount > 0 && (
-                        <div className="clash-alert-pill" onClick={() => openClashResolver(d)}>
-                          ⚠️ {clashingCount} Clashes — Resolve
-                        </div>
+                        <button className="clash-alert-pill" onClick={() => openClashResolver(d)}>
+                          ⚠️ {pluralize(clashingCount, 'Class Clashes', 'Clashes')} — Fix Now
+                        </button>
                       )}
                     </div>
 
                     {d.sessions.map(s => {
                       const isCancelled = s.status === 'Cancelled';
+                      const isHoliday = s.type === 'Holiday';
                       const timeStr = `${formatMinTo12h(s.startMin)} – ${formatMinTo12h(s.endMin)}`;
+
+                      if (isHoliday) {
+                        return (
+                          <div key={s.id} className="class-card holiday-card">
+                            <div className="card-top-row">
+                              <div className="course-name">🌴 Holiday — No Classes Scheduled</div>
+                              <div className="card-badges">
+                                <span className="pill-badge badge-holiday">Holiday</span>
+                              </div>
+                            </div>
+                            <div className="card-details-row">
+                              <span className="detail-item">Marked as Holiday in the official timetable</span>
+                            </div>
+                          </div>
+                        );
+                      }
 
                       return (
                         <div
@@ -445,11 +627,14 @@ export default function Home() {
                             <div className="course-name">{s.course}</div>
                             <div className="card-badges">
                               {s.no && <span className="pill-badge badge-session">Session #{s.no}</span>}
-                              {s.isClashing && <span className="pill-badge badge-clash">Clash</span>}
-                              {isCancelled && <span className="pill-badge badge-cancelled">Cancelled</span>}
-                              {s.type !== 'Course' && (
-                                <span className="pill-badge" style={{ background: '#EEEEEE' }}>{s.type}</span>
+                              {s.type === 'Quiz' && <span className="pill-badge badge-quiz">📝 Quiz</span>}
+                              {s.type === 'EndTerm' && <span className="pill-badge badge-endterm">🎓 End Term</span>}
+                              {s.type === 'ODC' && <span className="pill-badge badge-odc">🚌 ODC</span>}
+                              {s.type !== 'Course' && !['Quiz', 'EndTerm', 'ODC'].includes(s.type) && (
+                                <span className="pill-badge" style={{ background: '#EEEEEE', color: '#3C4043' }}>{s.type}</span>
                               )}
+                              {s.isClashing && <span className="pill-badge badge-clash">Clash</span>}
+                              {isCancelled && <span className="pill-badge badge-cancelled">❌ Cancelled</span>}
                             </div>
                           </div>
 
@@ -459,11 +644,22 @@ export default function Home() {
                             {s.section === 'ALL' && <span className="detail-item">👥 All Sections</span>}
                           </div>
 
+                          {isCancelled && (
+                            <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 8 }}>
+                              This class was cancelled (struck through in master sheet) and does not count toward session numbers.
+                            </div>
+                          )}
+
                           {s.isClashing && (
                             <div className="clash-warning-box">
-                              <span>⚠️ Overlaps with another class! We found smart alternates.</span>
-                              <button className="resolve-clash-btn" onClick={() => openClashResolver(d)}>
-                                Resolve →
+                              <span>
+                                ⚠️ Same time as <strong>{s.clashesWithCourses?.join(', ') || 'another class'}</strong>!
+                              </span>
+                              <button
+                                className="resolve-clash-btn"
+                                onClick={() => openClashResolver(d, s.id)}
+                              >
+                                Fix This Clash →
                               </button>
                             </div>
                           )}
@@ -483,7 +679,7 @@ export default function Home() {
         {activeTab === 'clash' && (
           <div>
             <button className="back-nav-btn" onClick={() => setActiveTab('schedule')}>
-              ← Back to Schedule
+              ← Back to My Schedule
             </button>
 
             {/* Date Hero Banner */}
@@ -492,12 +688,27 @@ export default function Home() {
                 <div className="clash-date-calendar-icon">📅</div>
                 <div>
                   <div className="clash-date-text">
-                    {formatDisplayDate(activeClashDay.date, activeClashDay.dow)}
+                    {getClashContextDate(activeClashDay.date, activeClashDay.dow)}
                   </div>
                   <div className="clash-time-subtext">
-                    🕒 {clashAdvice?.timeFormatted || ''} · Section {section} Timetable Clash
+                    🕒 {activeCluster?.timeFormatted || ''} · Section {section} Class Clash
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Multi-Cluster Selector when 2+ separate clash windows happen on one day */}
+            {clashAdvice?.clusters?.length > 1 && (
+              <div className="cluster-switcher">
+                {clashAdvice.clusters.map((cl, idx) => (
+                  <button
+                    key={idx}
+                    className={`cluster-pill ${selectedClusterIdx === idx ? 'active' : ''}`}
+                    onClick={() => { setSelectedClusterIdx(idx); setConfirmedPlan(null); }}
+                  >
+                    Clash {idx + 1}: {cl.timeFormatted}
+                  </button>
+                ))}
               </div>
             )}
 
@@ -525,69 +736,45 @@ export default function Home() {
               </div>
             ) : confirmedPlan ? (
               /* Plan Confirmed View */
-              <div className="plan-confirmed-card">
+              <div className={`plan-confirmed-card ${!confirmedPlan.allSkippedHaveFreeAlt ? 'has-warning' : ''}`}>
                 <div className="plan-celebration-title">
-                  <span>🎉</span> <span>Clash-Free Plan Confirmed!</span>
+                  <span>{confirmedPlan.allSkippedHaveFreeAlt ? '🎉' : '⚠️'}</span>
+                  <span>
+                    {confirmedPlan.allSkippedHaveFreeAlt
+                      ? 'Clash-Free Plan Confirmed!'
+                      : 'Plan Selected (Has Overlap)'}
+                  </span>
                 </div>
                 <div className="plan-celebration-sub">
                   Here is your plan for Section {section} on {confirmedPlan.dateFormatted}:
                 </div>
+
                 <div className="plan-steps-container">
-                  {confirmedPlan.isSameDayAlt && confirmedPlan.isAltEarlier ? (
+                  {confirmedPlan.isSingleSameDayFree && confirmedPlan.isAltEarlier ? (
                     <>
                       <div className="same-day-solution-banner">
-                        ⚡ <strong>Same-Day Plan ({confirmedPlan.dateFormatted}):</strong> Attend <strong>{confirmedPlan.other.session.course}</strong> at {confirmedPlan.other.bestAlternate.timeFormatted} and <strong>{confirmedPlan.kept.session.course}</strong> at {confirmedPlan.keptTime}.
+                        ⚡ <strong>Same-Day Plan ({confirmedPlan.dateFormatted}):</strong> Attend <strong>{confirmedPlan.others[0].session.course}</strong> first at {confirmedPlan.others[0].bestAlternate.timeFormatted}, then stay for <strong>{confirmedPlan.kept.session.course}</strong> at {confirmedPlan.keptTime}.
                       </div>
                       <div className="step-box alt-step">
                         <div className="step-header alt">
-                          <span>1️⃣</span> <span>Attend Earlier at {confirmedPlan.other.bestAlternate.timeFormatted}</span>
+                          <span>1️⃣</span> <span>Step 1 · Attend Earlier at {confirmedPlan.others[0].bestAlternate.timeFormatted}</span>
                         </div>
                         <div className="step-body-main">
-                          {confirmedPlan.other.session.course} {confirmedPlan.other.session.no ? `(Session #${confirmedPlan.other.session.no})` : ''}
+                          {confirmedPlan.others[0].session.course} {confirmedPlan.others[0].session.no ? `(Session #${confirmedPlan.others[0].session.no})` : ''}
                         </div>
                         <div className="step-body-sub">
-                          📅 {confirmedPlan.dateFormatted} · 📍 Room: <strong>{confirmedPlan.other.bestAlternate.room || 'TBD'}</strong> (with Section {confirmedPlan.other.bestAlternate.sections.join(', ')})
+                          📅 {confirmedPlan.dateFormatted} · 📍 Room: <strong>{confirmedPlan.others[0].bestAlternate.room || 'TBD'}</strong> (with Section {confirmedPlan.others[0].bestAlternate.sections.join(', ')})
                         </div>
                       </div>
-
                       <div className="step-box today-step">
                         <div className="step-header today">
-                          <span>2️⃣</span> <span>Attend at {confirmedPlan.keptTime}</span>
+                          <span>2️⃣</span> <span>Step 2 · Attend at {confirmedPlan.keptTime}</span>
                         </div>
                         <div className="step-body-main">
                           {confirmedPlan.kept.session.course} {confirmedPlan.kept.session.no ? `(Session #${confirmedPlan.kept.session.no})` : ''}
                         </div>
                         <div className="step-body-sub">
                           📅 {confirmedPlan.dateFormatted} · 📍 Room: <strong>{confirmedPlan.kept.session.room || 'TBD'}</strong> (with Section {section})
-                        </div>
-                      </div>
-                    </>
-                  ) : confirmedPlan.isSameDayAlt && !confirmedPlan.isAltEarlier ? (
-                    <>
-                      <div className="same-day-solution-banner">
-                        ⚡ <strong>Same-Day Plan ({confirmedPlan.dateFormatted}):</strong> Attend <strong>{confirmedPlan.kept.session.course}</strong> at {confirmedPlan.keptTime} and <strong>{confirmedPlan.other.session.course}</strong> at {confirmedPlan.other.bestAlternate.timeFormatted}.
-                      </div>
-                      <div className="step-box today-step">
-                        <div className="step-header today">
-                          <span>1️⃣</span> <span>Attend at {confirmedPlan.keptTime}</span>
-                        </div>
-                        <div className="step-body-main">
-                          {confirmedPlan.kept.session.course} {confirmedPlan.kept.session.no ? `(Session #${confirmedPlan.kept.session.no})` : ''}
-                        </div>
-                        <div className="step-body-sub">
-                          📅 {confirmedPlan.dateFormatted} · 📍 Room: <strong>{confirmedPlan.kept.session.room || 'TBD'}</strong> (with Section {section})
-                        </div>
-                      </div>
-
-                      <div className="step-box alt-step">
-                        <div className="step-header alt">
-                          <span>2️⃣</span> <span>Attend Later at {confirmedPlan.other.bestAlternate.timeFormatted}</span>
-                        </div>
-                        <div className="step-body-main">
-                          {confirmedPlan.other.session.course} {confirmedPlan.other.session.no ? `(Session #${confirmedPlan.other.session.no})` : ''}
-                        </div>
-                        <div className="step-body-sub">
-                          📅 {confirmedPlan.dateFormatted} · 📍 Room: <strong>{confirmedPlan.other.bestAlternate.room || 'TBD'}</strong> (with Section {confirmedPlan.other.bestAlternate.sections.join(', ')})
                         </div>
                       </div>
                     </>
@@ -595,33 +782,52 @@ export default function Home() {
                     <>
                       <div className="step-box today-step">
                         <div className="step-header today">
-                          <span>1️⃣</span> <span>Attend on {confirmedPlan.dateFormatted}</span>
+                          <span>1️⃣</span> <span>Step 1 · Attend on {confirmedPlan.dateFormatted} ({confirmedPlan.keptTime})</span>
                         </div>
                         <div className="step-body-main">
                           {confirmedPlan.kept.session.course} {confirmedPlan.kept.session.no ? `(Session #${confirmedPlan.kept.session.no})` : ''}
                         </div>
                         <div className="step-body-sub">
-                          🕒 {confirmedPlan.dateFormatted} @ {confirmedPlan.keptTime} · 📍 Room: <strong>{confirmedPlan.kept.session.room || 'TBD'}</strong>
+                          📍 Room: <strong>{confirmedPlan.kept.session.room || 'TBD'}</strong> (with Section {section})
                         </div>
                       </div>
 
-                      <div className="step-box alt-step">
-                        <div className="step-header alt">
-                          <span>2️⃣</span> <span>Attend Alternate Session</span>
-                        </div>
-                        <div className="step-body-main">
-                          {confirmedPlan.other.session.course} {confirmedPlan.other.session.no ? `(Session #${confirmedPlan.other.session.no})` : ''}
-                        </div>
-                        {confirmedPlan.other.bestAlternate ? (
-                          <div className="step-body-sub">
-                            📅 {formatDisplayDate(confirmedPlan.other.bestAlternate.date, confirmedPlan.other.bestAlternate.dow)} @ {confirmedPlan.other.bestAlternate.timeFormatted} · 📍 Room: <strong>{confirmedPlan.other.bestAlternate.room || 'TBD'}</strong> (with Section {confirmedPlan.other.bestAlternate.sections.join(', ')})
+                      {confirmedPlan.others.map((o, idx) => {
+                        const alt = o.bestAlternate;
+                        const isAltFree = alt && alt.free;
+                        const stepNo = confirmedPlan.others.length > 1 ? `2${String.fromCharCode(97 + idx)}` : '2️⃣';
+                        return (
+                          <div key={o.session.id} className={`step-box ${!alt ? 'danger-step' : isAltFree ? 'alt-step' : 'warn-step'}`}>
+                            <div className={`step-header ${!alt ? 'danger' : isAltFree ? 'alt' : 'warn'}`}>
+                              <span>{stepNo}</span>
+                              <span>
+                                {!alt
+                                  ? `No Alternate Available for ${o.session.course}`
+                                  : isAltFree
+                                    ? `Step 2 · Attend Alternate Session`
+                                    : `Step 2 · Alternate Overlaps Existing Class`}
+                              </span>
+                            </div>
+                            <div className="step-body-main">
+                              {o.session.course} {o.session.no ? `(Session #${o.session.no})` : ''}
+                            </div>
+                            {alt ? (
+                              <div className="step-body-sub">
+                                📅 {formatDisplayDate(alt.date, alt.dow)} @ {alt.timeFormatted} · 📍 Room: <strong>{alt.room || 'TBD'}</strong> (with Section {alt.sections.join(', ')})
+                                {!alt.free && alt.conflictsWith?.length > 0 && (
+                                  <div style={{ color: 'var(--google-red)', fontWeight: 700, marginTop: 4 }}>
+                                    ⚠️ Overlaps with your {alt.conflictsWith.map(c => `${c.course} (${c.timeFormatted})`).join(', ')}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="step-body-sub" style={{ color: 'var(--google-red)', fontWeight: 600 }}>
+                                No other section offers this session. Please consult Academic Operations.
+                              </div>
+                            )}
                           </div>
-                        ) : (
-                          <div className="step-body-sub" style={{ color: 'var(--google-red)' }}>
-                            No alternate session scheduled in any other section.
-                          </div>
-                        )}
-                      </div>
+                        );
+                      })}
                     </>
                   )}
                 </div>
@@ -634,18 +840,28 @@ export default function Home() {
                   >
                     📋 Copy Plan for WhatsApp / Notes
                   </button>
-                  {confirmedPlan.other.bestAlternate && (
-                    <button
-                      className="back-nav-btn"
-                      style={{ width: '100%', justifyContent: 'center', padding: '8px 0' }}
-                      onClick={() => openAlternatesForSession(confirmedPlan.other.session.id)}
-                    >
-                      🔍 View All {confirmedPlan.other.totalAlternates} Alternates for {confirmedPlan.other.session.course} →
-                    </button>
+                  {confirmedPlan.others.map(o =>
+                    o.totalAlternates > 0 && (
+                      <button
+                        key={o.session.id}
+                        className="back-nav-btn"
+                        style={{ width: '100%', justifyContent: 'center', padding: '6px 0', marginBottom: 0 }}
+                        onClick={() => openAlternatesForSession(o.session.id, 'clash')}
+                      >
+                        🔍 View All {pluralize(o.totalAlternates, 'Alternate', 'Alternates')} for {o.session.course} →
+                      </button>
+                    )
                   )}
                   <button
                     className="back-nav-btn"
-                    style={{ width: '100%', justifyContent: 'center', color: 'var(--text-secondary)', padding: '8px 0' }}
+                    style={{ width: '100%', justifyContent: 'center', color: 'var(--text-secondary)', padding: '6px 0', marginBottom: 0 }}
+                    onClick={() => setConfirmedPlan(null)}
+                  >
+                    ↺ Choose a Different Option
+                  </button>
+                  <button
+                    className="back-nav-btn"
+                    style={{ width: '100%', justifyContent: 'center', color: 'var(--text-secondary)', padding: '6px 0', marginBottom: 0 }}
                     onClick={() => setActiveTab('schedule')}
                   >
                     ← Done & Back to My Schedule
@@ -654,23 +870,31 @@ export default function Home() {
               </div>
             ) : (
               <div>
-                {/* Recommendation Banner */}
-                {clashAdvice?.recommendation?.reason && (
-                  <div className={`recommendation-banner ${clashAdvice.recommendation.badgeText === 'Action Required' ? 'warning' : ''}`}>
-                    <div className="rec-tag">💡 {clashAdvice.recommendation.badgeText || 'Smart Recommendation'}</div>
-                    <div className="rec-text">{clashAdvice.recommendation.reason}</div>
+                {/* Recommendation / Conflict Warning Banner */}
+                {activeCluster?.recommendation?.reason && (
+                  <div className={`recommendation-banner ${activeCluster.recommendation.hasClashFreeOption ? '' : 'warning'}`}>
+                    <div className="rec-tag">
+                      {activeCluster.recommendation.hasClashFreeOption ? '💡 ' : '⚠️ '}
+                      {activeCluster.recommendation.badgeText || 'Recommendation'}
+                    </div>
+                    <div className="rec-text">{activeCluster.recommendation.reason}</div>
                   </div>
                 )}
 
-                {/* 2-Step Decision Cards */}
-                {clashAdvice?.evaluatedSessions?.map((kept, idx) => {
-                  const other = idx === 0 ? clashAdvice.evaluatedSessions[1] : clashAdvice.evaluatedSessions[0];
-                  const isRec = clashAdvice.recommendation?.attendSessionId === kept.session.id;
+                {/* Decision Cards — handles 2-way and 3+ way clashes uniformly */}
+                {activeCluster?.evaluatedSessions?.map((kept, idx) => {
+                  const others = activeCluster.evaluatedSessions.filter(o => o.session.id !== kept.session.id);
+                  const isRec = activeCluster.recommendation?.attendSessionId === kept.session.id;
                   const keptTime = `${formatMinTo12h(kept.session.startMin)} – ${formatMinTo12h(kept.session.endMin)}`;
-                  const clashDateFormatted = getClashContextDate(activeClashDay.date, activeClashDay.dow);
+                  const clashDateFormatted = getClashContextDate(activeClashDay.date, activeCluster.dow || activeClashDay.dow);
 
-                  const isSameDayAlt = other.bestAlternate && other.bestAlternate.date === activeClashDay.date;
-                  const isAltEarlier = isSameDayAlt && (other.bestAlternate.startMin < kept.session.startMin);
+                  const primaryOther = others[0];
+                  const isSingleSameDayFree = others.length === 1 &&
+                    primaryOther?.bestAlternate &&
+                    primaryOther.bestAlternate.free &&
+                    primaryOther.bestAlternate.date === activeClashDay.date;
+                  const isAltEarlier = isSingleSameDayFree && (primaryOther.bestAlternate.startMin < kept.session.startMin);
+                  const allFree = others.every(o => o.bestAlternate && o.bestAlternate.free);
 
                   return (
                     <div
@@ -680,163 +904,184 @@ export default function Home() {
                       <div className="decision-top">
                         <div>
                           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: 2 }}>
-                            OPTION {idx + 1}
+                            CHOICE {idx + 1} · ATTEND IN YOUR SECTION
                           </div>
                           <div className="decision-course-name">
-                            {kept.session.course}
-                            {kept.session.no && <span style={{ fontSize: 14, color: 'var(--google-blue)', fontWeight: 600 }}> (Session #{kept.session.no})</span>}
+                            Keep {kept.session.course}
+                            {kept.session.no && (
+                              <span style={{ fontSize: 14, color: 'var(--google-blue)', fontWeight: 600 }}> (Session #{kept.session.no})</span>
+                            )}
+                          </div>
+                          <div className="decision-subtitle">
+                            Go to your regular {keptTime} class with Section {section}, and shift {others.map(o => o.session.course).join(' & ')}.
                           </div>
                         </div>
                         {isRec && (
                           <span className="pill-badge" style={{ background: 'var(--google-green)', color: '#FFF', fontWeight: 700 }}>
-                            ⭐ Recommended
+                            ⭐ Best Plan
                           </span>
                         )}
                       </div>
 
-                      {/* Step Sequences */}
-                      {isSameDayAlt && isAltEarlier ? (
+                      {isSingleSameDayFree && isAltEarlier ? (
                         <>
                           <div className="same-day-solution-banner">
-                            ⚡ <strong>Same-Day Solution:</strong> Attend <strong>{other.session.course}</strong> at {other.bestAlternate.timeFormatted} and <strong>{kept.session.course}</strong> at {keptTime} on {clashDateFormatted}.
+                            ⚡ <strong>Same-Day Solution:</strong> Take <strong>{primaryOther.session.course}</strong> earlier at {primaryOther.bestAlternate.timeFormatted}, then attend <strong>{kept.session.course}</strong> at {keptTime} on {clashDateFormatted}.
                           </div>
-
-                          {/* Step 1: Earlier Class */}
                           <div className="step-box alt-step">
                             <div className="step-header alt">
-                              <span>1️⃣</span> <span>Step 1 · Attend Earlier at {other.bestAlternate.timeFormatted}</span>
+                              <span>1️⃣</span> <span>Step 1 · Attend Earlier at {primaryOther.bestAlternate.timeFormatted}</span>
                             </div>
                             <div className="step-body-main">
-                              Attend <strong>{other.session.course}</strong> in Room {other.bestAlternate.room || 'TBD'}
+                              {primaryOther.session.course} in Room {primaryOther.bestAlternate.room || 'TBD'}
                             </div>
                             <div className="step-body-sub">
-                              📅 {clashDateFormatted} · 👥 Section {other.bestAlternate.sections.join(', ')} {' '}
-                              <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>(✅ Clash-Free for Section {section})</span>
+                              📅 {clashDateFormatted} · 👥 With Section {primaryOther.bestAlternate.sections.join(', ')} {' '}
+                              <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>(✅ Free for Section {section})</span>
                             </div>
                           </div>
-
-                          {/* Step 2: Second Class */}
                           <div className="step-box today-step">
                             <div className="step-header today">
                               <span>2️⃣</span> <span>Step 2 · Attend at {keptTime}</span>
                             </div>
                             <div className="step-body-main">
-                              Walk into Room {kept.session.room || 'TBD'} for <strong>{kept.session.course}</strong>
+                              {kept.session.course} in Room {kept.session.room || 'TBD'}
                             </div>
                             <div className="step-body-sub">
-                              📅 {clashDateFormatted} · Regular class with Section {section}
+                              📅 {clashDateFormatted} · Your regular Section {section} class
                             </div>
                           </div>
                         </>
-                      ) : isSameDayAlt && !isAltEarlier ? (
+                      ) : isSingleSameDayFree && !isAltEarlier ? (
                         <>
                           <div className="same-day-solution-banner">
-                            ⚡ <strong>Same-Day Solution:</strong> Attend <strong>{kept.session.course}</strong> at {keptTime} and <strong>{other.session.course}</strong> at {other.bestAlternate.timeFormatted} on {clashDateFormatted}.
+                            ⚡ <strong>Same-Day Solution:</strong> Attend <strong>{kept.session.course}</strong> at {keptTime}, then take <strong>{primaryOther.session.course}</strong> later at {primaryOther.bestAlternate.timeFormatted} on {clashDateFormatted}.
                           </div>
-
-                          {/* Step 1: First Class */}
                           <div className="step-box today-step">
                             <div className="step-header today">
                               <span>1️⃣</span> <span>Step 1 · Attend at {keptTime}</span>
                             </div>
                             <div className="step-body-main">
-                              Walk into Room {kept.session.room || 'TBD'} for <strong>{kept.session.course}</strong>
+                              {kept.session.course} in Room {kept.session.room || 'TBD'}
                             </div>
                             <div className="step-body-sub">
-                              📅 {clashDateFormatted} · Regular class with Section {section}
+                              📅 {clashDateFormatted} · Your regular Section {section} class
                             </div>
                           </div>
-
-                          {/* Step 2: Later Class */}
                           <div className="step-box alt-step">
                             <div className="step-header alt">
-                              <span>2️⃣</span> <span>Step 2 · Attend Later at {other.bestAlternate.timeFormatted}</span>
+                              <span>2️⃣</span> <span>Step 2 · Attend Later at {primaryOther.bestAlternate.timeFormatted}</span>
                             </div>
                             <div className="step-body-main">
-                              Attend <strong>{other.session.course}</strong> in Room {other.bestAlternate.room || 'TBD'}
+                              {primaryOther.session.course} in Room {primaryOther.bestAlternate.room || 'TBD'}
                             </div>
                             <div className="step-body-sub">
-                              📅 {clashDateFormatted} · 👥 Section {other.bestAlternate.sections.join(', ')} {' '}
-                              <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>(✅ Clash-Free for Section {section})</span>
+                              📅 {clashDateFormatted} · 👥 With Section {primaryOther.bestAlternate.sections.join(', ')} {' '}
+                              <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>(✅ Free for Section {section})</span>
                             </div>
                           </div>
                         </>
                       ) : (
                         <>
-                          {/* Step 1 */}
                           <div className="step-box today-step">
                             <div className="step-header today">
-                              <span>1️⃣</span> <span>Step 1 · Attend on {clashDateFormatted}</span>
+                              <span>1️⃣</span> <span>Step 1 · Attend on {clashDateFormatted} ({keptTime})</span>
                             </div>
-                            <div className="step-body-main">Walk into Room {kept.session.room || 'TBD'} at {keptTime}</div>
-                            <div className="step-body-sub">Course: {kept.session.course} with Section {section}</div>
+                            <div className="step-body-main">Walk into Room {kept.session.room || 'TBD'} for {kept.session.course}</div>
+                            <div className="step-body-sub">Your regular class with Section {section}</div>
                           </div>
 
-                          {/* Step 2 */}
-                          {other.hasNoAlternates ? (
-                            <div className="step-box warn-step">
-                              <div className="step-header warn">
-                                <span>⚠️</span> <span>Step 2 · Warning for {other.session.course}</span>
-                              </div>
-                              <div className="step-body-main" style={{ color: 'var(--google-red)' }}>
-                                No alternate session exists in any other section!
-                              </div>
-                              <div className="step-body-sub">
-                                If you attend {kept.session.course} on {clashDateFormatted}, you will not have an alternate slot for {other.session.course}.
-                              </div>
-                            </div>
-                          ) : other.bestAlternate ? (
-                            <div className="step-box alt-step">
-                              <div className="step-header alt">
-                                <span>2️⃣</span> <span>Step 2 · Catch {other.session.course} on {formatDisplayDate(other.bestAlternate.date, other.bestAlternate.dow)}</span>
-                              </div>
-                              <div className="step-body-main">
-                                📅 {formatDisplayDate(other.bestAlternate.date, other.bestAlternate.dow)} · 🕒 {other.bestAlternate.timeFormatted}
-                              </div>
-                              <div className="step-body-sub">
-                                📍 Room: {other.bestAlternate.room || 'TBD'} · 👥 Section {other.bestAlternate.sections.join(', ')} {' '}
-                                {other.bestAlternate.free ? (
-                                  <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>
-                                    (✅ Clash-Free for Section {section})
+                          {others.map((other, oIdx) => {
+                            const alt = other.bestAlternate;
+                            const stepTag = others.length > 1 ? `2${String.fromCharCode(97 + oIdx)}` : '2️⃣';
+                            if (other.hasNoAlternates || !alt) {
+                              return (
+                                <div key={other.session.id} className="step-box danger-step">
+                                  <div className="step-header danger">
+                                    <span>🚫</span> <span>Step {stepTag} · No Alternate for {other.session.course}</span>
+                                  </div>
+                                  <div className="step-body-main" style={{ color: 'var(--google-red)' }}>
+                                    No alternate session exists in any other section!
+                                  </div>
+                                  <div className="step-body-sub">
+                                    If you skip {other.session.course} on {clashDateFormatted}, there is no other section to attend.
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            const altDateStr = getClashContextDate(alt.date, alt.dow);
+                            const conflictsText = alt.conflictsWith?.map(c => `${c.course} (${c.timeFormatted})`).join(', ');
+                            return (
+                              <div key={other.session.id} className={`step-box ${alt.free ? 'alt-step' : 'warn-step'}`}>
+                                <div className={`step-header ${alt.free ? 'alt' : 'warn'}`}>
+                                  <span>{alt.free ? stepTag : '⚠️'}</span>
+                                  <span>
+                                    {alt.free
+                                      ? `Step ${stepTag} · Attend ${other.session.course} on ${formatDisplayDate(alt.date, alt.dow)}`
+                                      : `Step ${stepTag} · Only Alternate for ${other.session.course} Overlaps`}
                                   </span>
-                                ) : (
-                                  <span style={{ color: 'var(--google-red)' }}>
-                                    (⚠️ Conflicts with your timetable)
-                                  </span>
-                                )}
+                                </div>
+                                <div className="step-body-main">
+                                  📅 {altDateStr} · 🕒 {alt.timeFormatted}
+                                </div>
+                                <div className="step-body-sub">
+                                  📍 Room: {alt.room || 'TBD'} · 👥 With Section {alt.sections.join(', ')} {' '}
+                                  {alt.free ? (
+                                    <span style={{ color: 'var(--google-green)', fontWeight: 700 }}>
+                                      (✅ Free for Section {section})
+                                    </span>
+                                  ) : (
+                                    <div style={{ color: 'var(--google-red)', fontWeight: 700, marginTop: 4 }}>
+                                      ⚠️ Overlaps with your {conflictsText || 'scheduled class'}! You cannot attend both at {alt.timeFormatted}.
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          ) : null}
+                            );
+                          })}
                         </>
                       )}
 
                       {/* Action Button */}
                       <button
-                        className={`action-attend-btn ${isRec ? 'recommended' : ''}`}
+                        className={`action-attend-btn ${isRec ? 'recommended' : allFree ? '' : 'warning-btn'}`}
                         style={{ marginTop: 10 }}
                         onClick={() => handleConfirmPlan(kept.session.id)}
                       >
-                        {isRec ? '⭐ ' : '👉 '}Confirm Plan: {isSameDayAlt ? `Attend Both on ${formatDisplayDate(activeClashDay.date, activeClashDay.dow)}` : `Attend ${kept.session.course} on ${formatDisplayDate(activeClashDay.date, activeClashDay.dow)}`}
+                        {allFree
+                          ? `${isRec ? '⭐ ' : '👉 '}Confirm Plan: ${isSingleSameDayFree ? `Attend Both on ${formatDisplayDate(activeClashDay.date, activeCluster.dow)}` : `Attend ${kept.session.course} on ${formatDisplayDate(activeClashDay.date, activeCluster.dow)}`}`
+                          : `⚠️ Select ${kept.session.course} (Has Overlap Warning)`}
                       </button>
 
-                      {/* Secondary Link */}
-                      {!other.hasNoAlternates && other.totalAlternates > 0 && (
-                        <div style={{ textAlign: 'center', marginTop: 8 }}>
-                          <a
-                            href="#"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              openAlternatesForSession(other.session.id);
-                            }}
-                            style={{ fontSize: 13, color: 'var(--google-blue)', textDecoration: 'underline', fontWeight: 600 }}
-                          >
-                            View all {other.totalAlternates} alternate slots for {other.session.course} →
-                          </a>
-                        </div>
+                      {/* Secondary Links to View All Alternates */}
+                      {others.map(other =>
+                        !other.hasNoAlternates && other.totalAlternates > 0 && (
+                          <div key={other.session.id} style={{ textAlign: 'center', marginTop: 8 }}>
+                            <a
+                              href="#"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                openAlternatesForSession(other.session.id, 'clash');
+                              }}
+                              style={{ fontSize: 13, color: 'var(--google-blue)', textDecoration: 'underline', fontWeight: 600 }}
+                            >
+                              View all {pluralize(other.totalAlternates, 'alternate slot', 'alternate slots')} for {other.session.course} →
+                            </a>
+                          </div>
+                        )
                       )}
                     </div>
                   );
                 })}
+
+                <button
+                  className="back-nav-btn"
+                  style={{ width: '100%', justifyContent: 'center', marginTop: 4 }}
+                  onClick={() => setActiveTab('schedule')}
+                >
+                  ← Back to My Schedule
+                </button>
               </div>
             )}
           </div>
@@ -847,20 +1092,23 @@ export default function Home() {
         {/* ============================================================ */}
         {activeTab === 'alternates' && (
           <div>
-            <button className="back-nav-btn" onClick={() => setActiveTab('schedule')}>
-              ← Back to Schedule
+            <button
+              className="back-nav-btn"
+              onClick={() => setActiveTab(alternatesReturnTab === 'clash' && activeClashDay ? 'clash' : 'schedule')}
+            >
+              {alternatesReturnTab === 'clash' && activeClashDay ? '← Back to Clash Options' : '← Back to My Schedule'}
             </button>
 
             {skippedSession && (
               <div className="skipped-summary-banner">
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--google-yellow)', marginBottom: 2 }}>
-                  LOOKING FOR ALTERNATE
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--google-amber)', marginBottom: 2, textTransform: 'uppercase' }}>
+                  ALL ALTERNATE TIMINGS
                 </div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>
                   {skippedSession.course} {skippedSession.no ? `(Session #${skippedSession.no})` : ''}
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-                  Originally scheduled on {formatDisplayDate(skippedSession.date, skippedSession.dow)} at {formatMinTo12h(skippedSession.startMin)}
+                  Your regular Section {section} slot: {formatDisplayDate(skippedSession.date, skippedSession.dow)} at {formatMinTo12h(skippedSession.startMin)}
                 </div>
               </div>
             )}
@@ -891,7 +1139,8 @@ export default function Home() {
                 const isFree = alt.free;
                 const sectionsStr = alt.sections.join(', ');
                 const dateFormatted = formatDisplayDate(alt.date, alt.dow);
-                const copyText = `${alt.course} Session #${alt.no} | ${alt.dow} ${alt.date} | ${alt.timeFormatted} | Room: ${alt.room} | Section ${sectionsStr}`;
+                const sessPart = alt.no ? ` Session #${alt.no}` : '';
+                const copyText = `${alt.course}${sessPart} | ${alt.dow} ${alt.date} | ${alt.timeFormatted} | Room: ${alt.room} | Section ${sectionsStr}`;
 
                 return (
                   <div
@@ -901,7 +1150,7 @@ export default function Home() {
                     <div className="recommendation-rank">
                       {isFree
                         ? (idx === 0 ? '⭐ Best Match (Free for You)' : '✅ Clash-Free Option')
-                        : '⚠️ Has Conflict with Your Timetable'}
+                        : '⚠️ Overlaps With Your Section Timetable'}
                     </div>
 
                     <div className="alt-header-row">
@@ -909,7 +1158,7 @@ export default function Home() {
                       <div>
                         {isFree ? (
                           <span className="pill-badge" style={{ background: 'var(--google-green-surface)', color: 'var(--google-green)', fontWeight: 700 }}>
-                            Free for you
+                            Free for Sec {section}
                           </span>
                         ) : (
                           <span className="pill-badge" style={{ background: 'var(--google-red-surface)', color: 'var(--google-red)' }}>
@@ -923,15 +1172,15 @@ export default function Home() {
                       <span className="detail-item">📍 Room: <strong>{alt.room}</strong></span>
                       <span className="detail-item">👥 Section: <strong>{sectionsStr}</strong></span>
                       {alt.sameDay && (
-                        <span className="detail-item" style={{ color: 'var(--google-green)', fontWeight: 600 }}>
+                        <span className="detail-item" style={{ color: 'var(--google-blue)', fontWeight: 600 }}>
                           ✨ Same Day
                         </span>
                       )}
                     </div>
 
                     {!isFree && alt.conflictsWith && alt.conflictsWith.length > 0 && (
-                      <div style={{ fontSize: 12, color: 'var(--google-red)', marginBottom: 10, background: '#FFF5F5', padding: '6px 10px', borderRadius: 4 }}>
-                        Conflicts with your {alt.conflictsWith.map(c => c.course).join(', ')}
+                      <div style={{ fontSize: 12.5, color: 'var(--google-red)', fontWeight: 600, marginBottom: 10, background: 'var(--google-red-surface)', padding: '8px 10px', borderRadius: 6 }}>
+                        ⚠️ Overlaps with your {alt.conflictsWith.map(c => `${c.course} (${c.timeFormatted})`).join(', ')}
                       </div>
                     )}
 
@@ -956,9 +1205,19 @@ export default function Home() {
         {activeTab === 'subject' && (
           <div>
             <div className="form-card">
-              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Find Any Class Occurrence</h3>
-              
-              <label className="form-label" htmlFor="subject-course-picker">Select Course</label>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Find Any Class Across All Sections</h3>
+
+              <label className="form-label" htmlFor="subject-search-box">Search Course (optional)</label>
+              <input
+                id="subject-search-box"
+                type="text"
+                className="form-input"
+                placeholder="Type course name, e.g. Valuation, Marketing…"
+                value={courseSearch}
+                onChange={(e) => setCourseSearch(e.target.value)}
+              />
+
+              <label className="form-label" htmlFor="subject-course-picker">1. Select Course</label>
               <select
                 id="subject-course-picker"
                 className="form-select"
@@ -966,14 +1225,14 @@ export default function Home() {
                 onChange={(e) => handleCourseChange(e.target.value)}
               >
                 <option value="">-- Select a Course --</option>
-                {bootstrap?.courses?.map(c => (
+                {filteredCourses.map(c => (
                   <option key={c.name} value={c.name}>
-                    {c.name} ({c.maxNo} sessions)
+                    {c.name} ({pluralize(c.maxNo, 'session', 'sessions')})
                   </option>
                 ))}
               </select>
 
-              <label className="form-label" htmlFor="subject-session-picker">Select Session Number</label>
+              <label className="form-label" htmlFor="subject-session-picker">2. Select Session Number</label>
               <select
                 id="subject-session-picker"
                 className="form-select"
@@ -981,7 +1240,7 @@ export default function Home() {
                 onChange={(e) => handleSessionChange(e.target.value)}
                 disabled={!selectedCourse}
               >
-                <option value="">-- Select Session # --</option>
+                <option value="">{selectedCourse ? '-- Select Session # --' : '-- Select Course First --'}</option>
                 {selectedCourseObj &&
                   Array.from({ length: selectedCourseObj.maxNo }, (_, i) => (
                     <option key={i + 1} value={i + 1}>
@@ -991,7 +1250,7 @@ export default function Home() {
               </select>
 
               <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                Showing alternate timings across all sections A through H.
+                Checking against your <strong>Section {section}</strong> timetable to show which slots are free.
               </div>
             </div>
 
@@ -999,24 +1258,34 @@ export default function Home() {
               <div className="skeleton-card">
                 <div className="skeleton-bar" style={{ height: 80 }}></div>
               </div>
+            ) : selectedCourse && selectedSessionNo && subjectOfferings.length === 0 ? (
+              <div className="empty-state-box">
+                <p style={{ fontWeight: 700, fontSize: 15 }}>No active slots found for {selectedCourse} Session #{selectedSessionNo}.</p>
+              </div>
             ) : (
               subjectOfferings.map((r, idx) => {
                 const dateFormatted = formatDisplayDate(r.date, r.dow);
                 const sectionsStr = r.sections.join(', ');
-                const copyText = `${r.course} Session #${r.no} | ${r.dow} ${r.date} | ${r.timeFormatted} | Room: ${r.room} | Section ${sectionsStr}`;
+                const copyText = formatSubjectCopyText(r);
+                const isOwnSectionSlot = r.sections.includes(section);
+                const otherConflicts = (r.conflictsWith || []).filter(c => !(c.course === r.course && c.startMin === r.startMin));
 
                 return (
-                  <div key={idx} className="class-card alternate" style={{ marginBottom: 10 }}>
+                  <div key={idx} className={`class-card ${isOwnSectionSlot ? (otherConflicts.length > 0 ? 'clash' : '') : r.free ? 'alternate' : 'clash'}`} style={{ marginBottom: 10 }}>
                     <div className="card-top-row">
                       <div className="course-name">{dateFormatted} · {r.timeFormatted}</div>
                       <div className="card-badges">
-                        {r.free ? (
+                        {isOwnSectionSlot ? (
+                          <span className="pill-badge badge-session">
+                            📘 Your Section ({section}){otherConflicts.length > 0 ? ' · Clash' : ''}
+                          </span>
+                        ) : r.free ? (
                           <span className="pill-badge" style={{ background: 'var(--google-green-surface)', color: 'var(--google-green)', fontWeight: 700 }}>
-                            Free for Section {section}
+                            ✅ Free for Section {section}
                           </span>
                         ) : (
                           <span className="pill-badge" style={{ background: 'var(--google-red-surface)', color: 'var(--google-red)' }}>
-                            Conflicts with Section {section}
+                            ⚠️ Overlaps Section {section}
                           </span>
                         )}
                       </div>
@@ -1026,6 +1295,17 @@ export default function Home() {
                       <span className="detail-item">📍 Room: <strong>{r.room}</strong></span>
                       <span className="detail-item">👥 Section: <strong>{sectionsStr}</strong></span>
                     </div>
+
+                    {isOwnSectionSlot && otherConflicts.length > 0 && (
+                      <div style={{ fontSize: 12.5, color: 'var(--google-red)', fontWeight: 600, marginBottom: 8 }}>
+                        Your Section {section} also has {otherConflicts.map(c => c.course).join(', ')} at this time
+                      </div>
+                    )}
+                    {!isOwnSectionSlot && !r.free && r.conflictsWith?.length > 0 && (
+                      <div style={{ fontSize: 12.5, color: 'var(--google-red)', fontWeight: 600, marginBottom: 8 }}>
+                        Overlaps with your: {r.conflictsWith.map(c => `${c.course} (${c.timeFormatted})`).join(', ')}
+                      </div>
+                    )}
 
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                       <button
@@ -1043,34 +1323,58 @@ export default function Home() {
         )}
 
         {/* ============================================================ */}
-        {/* TAB 5: ABOUT & DIAGNOSTICS                                   */}
+        {/* TAB 5: HELP & STATUS                                         */}
         {/* ============================================================ */}
         {activeTab === 'status' && (
           <div>
             <div className="form-card">
-              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>About Alt-Class Finder</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>How to Use This App (3 Simple Steps)</h3>
               <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 12 }}>
-                Created for <strong>Masters&apos; Union Cohort 7</strong> to help students navigate timetable clashes with ease.
+                Made for <strong>Masters&apos; Union Cohort 7</strong> students to solve same-time class clashes easily.
               </p>
-              <ul style={{ fontSize: 13, color: 'var(--text-secondary)', paddingLeft: 20, lineHeight: 1.7 }}>
-                <li><strong>Deployed on Vercel:</strong> Global CDN edge delivery with sub-100ms response times.</li>
-                <li><strong>Direct Master Sync:</strong> Synchronized with Google Sheets every 5 minutes.</li>
-                <li><strong>Accurate Attendance Numbering:</strong> Cancelled sessions (struck through in the master sheet) are skipped so session numbers align with actual syllabus coverage.</li>
-                <li><strong>Smart Ranking:</strong> Alternate class recommendations prioritize slots that are completely free in your section&apos;s calendar.</li>
-              </ul>
+              <div className="help-step-list">
+                <div className="help-step-item">
+                  <span className="help-step-num">1</span>
+                  <div><strong>Tap your Section (A–H)</strong> at the top. The app saves your choice automatically.</div>
+                </div>
+                <div className="help-step-item">
+                  <span className="help-step-num">2</span>
+                  <div><strong>Look for red boxes</strong> saying &quot;Fix This Clash →&quot; on any day where two classes happen at the same time.</div>
+                </div>
+                <div className="help-step-item">
+                  <span className="help-step-num">3</span>
+                  <div><strong>Pick Choice 1 or Choice 2</strong>, tap Confirm, and copy your plan for WhatsApp or Notes.</div>
+                </div>
+              </div>
             </div>
 
             <div className="form-card">
-              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>System Health</h3>
-              <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-                <div><strong>Cohort:</strong> Masters&apos; Union Cohort 7</div>
-                <div><strong>Current Term:</strong> {statusInfo?.termLabel || 'Cohort 7 — Term 3'}</div>
-                <div><strong>Platform:</strong> {statusInfo?.platform || 'Vercel Edge'}</div>
-                <div><strong>Total Tracked Sessions:</strong> {statusInfo?.counts?.sessions || 0}</div>
-                <div><strong>Active Classes:</strong> {statusInfo?.counts?.active || 0}</div>
-                <div><strong>Cancelled Sessions:</strong> {statusInfo?.counts?.cancelled || 0} (Skipped from numbering)</div>
-                <div><strong>Edge Cache Revalidation:</strong> Every 5 minutes</div>
+              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>What the Colors & Labels Mean</h3>
+              <div style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+                <div>🔴 <strong>Red Border (Clash):</strong> Two classes overlap at the same time in your section.</div>
+                <div>🟢 <strong>Green Badge (Free):</strong> Attending another section at this time will NOT clash with your classes.</div>
+                <div>🟡 <strong>Amber Warning (Overlaps):</strong> You already have another class at that alternate time.</div>
+                <div>⬜ <strong>Dashed Grey (Cancelled):</strong> Crossed out in the official timetable sheet and skipped from Session # counting.</div>
               </div>
+            </div>
+
+            <div className="form-card">
+              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>Live Timetable Status</h3>
+              <div style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.8, marginBottom: 12 }}>
+                <div><strong>Cohort & Term:</strong> {statusInfo?.termLabel || 'Cohort 7 — Term 3'}</div>
+                <div><strong>Auto-Update Schedule:</strong> Checks Google Sheets every {statusInfo?.refreshMinutes || 5} minutes</div>
+                {lastSyncedTime && <div><strong>Last Checked (IST):</strong> {lastSyncedTime}</div>}
+                <div><strong>Total Academic Classes Tracked:</strong> {statusInfo?.counts?.active ?? '—'}</div>
+                <div><strong>Cancelled Sessions Skipped:</strong> {statusInfo?.counts?.cancelled ?? '—'}</div>
+                <div><strong>Status:</strong> {statusInfo?.status === 'HEALTHY' ? '✅ Up to date & working normally' : 'Checking…'}</div>
+              </div>
+              <button
+                className="action-attend-btn"
+                onClick={() => fetchAllLiveMeta(true)}
+                disabled={refreshing}
+              >
+                {refreshing ? '🔄 Refreshing Timetable…' : '🔄 Refresh Timetable Now'}
+              </button>
             </div>
           </div>
         )}

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getLiveDataset } from '../../../lib/sheets.js';
 import { queryAlternates } from '../../../lib/query.js';
+import { SECTIONS, getTodayIST } from '../../../lib/config.js';
 
 export const revalidate = 300;
 
@@ -11,11 +12,14 @@ export async function GET(request) {
     const sessionId = searchParams.get('sessionId');
     const showPast = searchParams.get('showPast') === 'true';
 
+    if (!SECTIONS.includes(section)) {
+      return NextResponse.json({ ok: false, error: { message: `Invalid section: ${section}` } }, { status: 400 });
+    }
     if (!sessionId) {
       return NextResponse.json({ ok: false, error: { message: 'sessionId is required.' } }, { status: 400 });
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getTodayIST();
     const dataset = await getLiveDataset();
     const result = queryAlternates(dataset, section, sessionId, { showPast, todayISO: today });
 

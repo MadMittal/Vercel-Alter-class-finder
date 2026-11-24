@@ -11,9 +11,11 @@ export async function GET() {
       ok: true,
       data: {
         status: 'HEALTHY',
-        platform: 'Vercel Serverless Edge',
+        platform: 'Live Timetable Auto-Sync',
         termLabel: CFG.TERM_LABEL,
         counts: dataset.meta?.counts || null,
+        sourceFormat: dataset.meta?.sourceFormat || null,
+        refreshMinutes: Math.round(CFG.CACHE_TTL_MS / 60000),
         generatedAt: dataset.meta?.generatedAt || null,
       },
     });
