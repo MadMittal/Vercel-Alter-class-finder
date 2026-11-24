@@ -124,7 +124,7 @@ export default function Home() {
       if (sJson.ok) setStatusInfo(sJson.data);
       stampSyncClock();
       if (force && sectionReady && activeTab === 'schedule') {
-        await fetchTimetable();
+        await fetchTimetable(true);
         showToast('Timetable synced with Google Sheets!');
       }
     } catch (err) {
@@ -157,14 +157,15 @@ export default function Home() {
     }
   }
 
-  async function fetchTimetable() {
+  async function fetchTimetable(force = false) {
     const reqId = ++timetableReqSeq.current;
     setLoadingSchedule(true);
     try {
       const { from, to, isAll } = getDateRange();
+      const refreshParam = force ? '&refresh=1' : '';
       const url = isAll
-        ? `/api/timetable?section=${section}&range=all`
-        : `/api/timetable?section=${section}&from=${from}&to=${to}`;
+        ? `/api/timetable?section=${section}&range=all${refreshParam}`
+        : `/api/timetable?section=${section}&from=${from}&to=${to}${refreshParam}`;
       const res = await fetch(url);
       const json = await res.json();
       if (reqId !== timetableReqSeq.current) return;

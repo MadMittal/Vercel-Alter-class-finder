@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getLiveDataset } from '../../../lib/sheets.js';
 import { querySubjectSessions } from '../../../lib/query.js';
-import { SECTIONS, getTodayIST } from '../../../lib/config.js';
+import { SECTIONS, getTodayIST, apiCacheHeaders } from '../../../lib/config.js';
 
 export const revalidate = 300;
 
@@ -23,10 +23,13 @@ export async function GET(request) {
     const dataset = await getLiveDataset();
     const rows = querySubjectSessions(dataset, course, sessionNo, section, today);
 
-    return NextResponse.json({
-      ok: true,
-      data: { course, sessionNo: parseInt(sessionNo, 10), section, rows },
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        data: { course, sessionNo: parseInt(sessionNo, 10), section, rows },
+      },
+      { headers: apiCacheHeaders(false) }
+    );
   } catch (err) {
     return NextResponse.json({ ok: false, error: { message: err.message } }, { status: 400 });
   }

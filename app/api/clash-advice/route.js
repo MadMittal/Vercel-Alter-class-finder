@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getLiveDataset } from '../../../lib/sheets.js';
 import { getClashAdvice } from '../../../lib/query.js';
-import { getTodayIST } from '../../../lib/config.js';
+import { getTodayIST, apiCacheHeaders } from '../../../lib/config.js';
 
 export const revalidate = 300;
 
@@ -20,10 +20,13 @@ export async function GET(request) {
     const dataset = await getLiveDataset();
     const advice = getClashAdvice(dataset, section, date, today, sessionId);
 
-    return NextResponse.json({
-      ok: true,
-      data: advice,
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        data: advice,
+      },
+      { headers: apiCacheHeaders(false) }
+    );
   } catch (err) {
     return NextResponse.json({ ok: false, error: { message: err.message } }, { status: 400 });
   }

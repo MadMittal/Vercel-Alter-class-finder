@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { getTodayIST, addDaysISO, isNonAcademicSession } from '../lib/config.js';
+import { getTodayIST, addDaysISO, isNonAcademicSession, apiCacheHeaders } from '../lib/config.js';
 import { parseRange, strikeRatio, classifySession, splitCellEntries } from '../lib/parser.js';
 import { buildDataset } from '../lib/build.js';
 import { getLiveDataset } from '../lib/sheets.js';
@@ -163,6 +163,11 @@ check('Product Growth has equal 8 sessions across A, B, F (Bhanu ODC separated c
     counts[sec] = liveDataset.sessions.filter(s => s.section === sec && s.course === 'Product Growth' && s.type === 'Course' && s.status === 'Active').length;
   }
   assert.deepEqual(counts, { A: 8, B: 8, F: 8 });
+});
+
+check('Edge CDN apiCacheHeaders returns s-maxage=300 normally and no-store on force refresh', () => {
+  assert.deepEqual(apiCacheHeaders(false), { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60' });
+  assert.deepEqual(apiCacheHeaders(true), { 'Cache-Control': 'no-store' });
 });
 
 console.log('\n=== LEVEL 3: GAS PURE TEST SUITE (src/*.gs) ===');
