@@ -48,7 +48,10 @@ check('Non-academic & Academic sub-type separation works strictly', () => {
   assert.equal(isNonAcademicSession('CEP (Siddharth)'), true);
   assert.equal(isNonAcademicSession('SA-Case Union'), true);
   assert.equal(isNonAcademicSession('Re-exam Term 2'), true);
-  assert.equal(classifySession('Mayank Quiz').type, 'Quiz');
+  assert.equal(isNonAcademicSession('CEXO Session'), true);
+  assert.equal(isNonAcademicSession('Surprise Test'), true);
+  assert.equal(classifySession('Mayank Quiz').type, 'Non-Academic');
+  assert.equal(classifySession('Surprise Test').type, 'Non-Academic');
   assert.equal(classifySession('Bhupesh End term').type, 'EndTerm');
   assert.equal(classifySession('Akshay End term').type, 'EndTerm');
   assert.equal(classifySession('Bhanu ODC').type, 'ODC');
@@ -97,11 +100,13 @@ check(`Live ingestion uses XLSX, detects cancellations, and omits cancelled clas
   assert.ok(liveDataset.meta.counts.active > 800, `Expected active > 800, got ${liveDataset.meta.counts.active}`);
 });
 
-check('Zero Outclass/CEP/SA/Practicum/CXO/ReExam sessions and zero EndTerm/ODC/Elective fake courses', () => {
+check('Zero Outclass/CEP/SA/Practicum/CXO/CEXO/ReExam/Quiz/Test/Workshop sessions and zero fake courses', () => {
   const nonAcad = liveDataset.sessions.filter(s => isNonAcademicSession(s.course, s.rawText));
   assert.equal(nonAcad.length, 0, `Found leaked non-academic sessions: ${nonAcad.map(s => s.course)}`);
+  const leakedTypes = liveDataset.sessions.filter(s => ['Quiz', 'ReExam', 'Workshop', 'Masterclass', 'Guest Lecture', 'Bootcamp'].includes(s.type));
+  assert.equal(leakedTypes.length, 0, `Found leaked excluded types: ${leakedTypes.map(s => s.type + ':' + s.course)}`);
   const courseNames = liveDataset.courses.map(c => c.name);
-  for (const forbidden of ['Akshay End term', 'HROS ODC', 'Elective', 'Workshop']) {
+  for (const forbidden of ['Akshay End term', 'HROS ODC', 'Elective', 'Workshop', 'Financial Modelling — Quiz']) {
     assert.equal(courseNames.includes(forbidden), false, `Fake course found in catalog: ${forbidden}`);
   }
 });
